@@ -725,6 +725,135 @@ export interface Database {
           metadata?: Json;
         };
       };
+      telemetry: {
+        Row: {
+          id: string;
+          shop_id: string | null;
+          device_id: string;
+          device_name: string | null;
+          platform: string;
+          os_name: string | null;
+          os_version: string | null;
+          app_version: string | null;
+          battery_level: number | null;
+          is_charging: boolean | null;
+          network_type: string | null;
+          screen_resolution: string | null;
+          memory_usage: Json;
+          metadata: Json;
+          recorded_at: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          shop_id?: string | null;
+          device_id: string;
+          device_name?: string | null;
+          platform: string;
+          os_name?: string | null;
+          os_version?: string | null;
+          app_version?: string | null;
+          battery_level?: number | null;
+          is_charging?: boolean | null;
+          network_type?: string | null;
+          screen_resolution?: string | null;
+          memory_usage?: Json;
+          metadata?: Json;
+          recorded_at?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          shop_id?: string | null;
+          device_id?: string;
+          device_name?: string | null;
+          platform?: string;
+          os_name?: string | null;
+          os_version?: string | null;
+          app_version?: string | null;
+          battery_level?: number | null;
+          is_charging?: boolean | null;
+          network_type?: string | null;
+          screen_resolution?: string | null;
+          memory_usage?: Json;
+          metadata?: Json;
+          recorded_at?: string;
+          created_at?: string;
+        };
+      };
+      system_health: {
+        Row: {
+          id: string;
+          shop_id: string | null;
+          component: string;
+          status: string;
+          latency_ms: number | null;
+          error_count: number;
+          details: Json;
+          timestamp: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          shop_id?: string | null;
+          component: string;
+          status?: string;
+          latency_ms?: number | null;
+          error_count?: number;
+          details?: Json;
+          timestamp?: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          shop_id?: string | null;
+          component?: string;
+          status?: string;
+          latency_ms?: number | null;
+          error_count?: number;
+          details?: Json;
+          timestamp?: string;
+          created_at?: string;
+        };
+      };
+      system_logs: {
+        Row: {
+          id: string;
+          shop_id: string | null;
+          level: string;
+          tag: string;
+          message: string;
+          stack_trace: string | null;
+          device_id: string | null;
+          device_info: Json;
+          context: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          shop_id?: string | null;
+          level?: string;
+          tag: string;
+          message: string;
+          stack_trace?: string | null;
+          device_id?: string | null;
+          device_info?: Json;
+          context?: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          shop_id?: string | null;
+          level?: string;
+          tag?: string;
+          message?: string;
+          stack_trace?: string | null;
+          device_id?: string | null;
+          device_info?: Json;
+          context?: Json;
+          created_at?: string;
+        };
+      };
     };
     Views: {
       [_ in never]: never;

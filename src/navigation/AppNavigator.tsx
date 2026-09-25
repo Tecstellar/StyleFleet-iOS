@@ -22,6 +22,8 @@ import { WhatsAppAudience } from '../repositories/whatsappRepository';
 import { authService } from '../services/authService';
 import { billingService } from '../services/billingService';
 import { appointmentService } from '../services/appointmentService';
+import { telemetryService } from '../services/telemetryService';
+import { systemLogService } from '../services/systemLogService';
 
 // Screens
 import { SplashScreen } from '../screens/splash/SplashScreen';
@@ -90,9 +92,15 @@ export const AppNavigator = () => {
     count: 0,
   });
 
+  // Sync current shop with telemetry stream
+  useEffect(() => {
+    telemetryService.setShopId(currentShop?.id || null);
+  }, [currentShop?.id]);
+
   // Verify real session and shop on startup (persistent login)
   useEffect(() => {
     let isMounted = true;
+    telemetryService.startStream(currentShop?.id || null);
 
     (async () => {
       try {
@@ -180,10 +188,11 @@ export const AppNavigator = () => {
           setIsInitializing(false);
         }
       } catch (e) {
-        console.error('Initialization error:', e);
+        systemLogService.error('APP_INITIALIZATION', 'Failed to initialize session', e);
         const shop = await shopRepository.getCachedShop().catch(() => null);
         if (shop && isMounted) {
           setCurrentShop(shop);
+          telemetryService.setShopId(shop.id);
           setActiveTab('home');
           setInitialDestination('home');
         } else if (isMounted) {
@@ -197,6 +206,7 @@ export const AppNavigator = () => {
 
     return () => {
       isMounted = false;
+      telemetryService.stopStream();
     };
   }, []);
 
