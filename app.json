@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "StyleFleet",
+    "slug": "stylefleet",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSContactsUsageDescription": "StyleFleet needs access to your contacts to import clients into your salon roster."
+      }
+    },
+    "android": {
+      "package": "com.stylefleet.app",
+      "permissions": [
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0b0c15"
+      }
+    },
+    "plugins": [
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Salon OS needs access to your contacts to import clients into your salon roster."
+        }
+      ],
+      "expo-video"
+    ],
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c7a1d8c8-fdbc-4ed7-a757-212d63772899"
+      }
+    }
+  }
+}
