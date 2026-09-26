@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, StyleSheet, ActivityIndicator, Alert, Platform, StatusBar as RNStatusBar, Linking } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Alert, Platform, StatusBar as RNStatusBar, Linking, BackHandler } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme/ThemeContext';
@@ -288,6 +288,72 @@ export const AppNavigator = () => {
     setPendingAppointmentToBill(null);
     setScreen(tab);
   };
+
+  // Android Hardware Back Button Handling & App Exit Confirmation
+  useEffect(() => {
+    const onBackPress = () => {
+      // 1. While on splash screen or initializing, ignore back press
+      if (screen === 'splash' || isInitializing) {
+        return true;
+      }
+
+      // 2. If there is navigation history, pop back to the previous screen
+      if (history.length > 0) {
+        goBack();
+        return true;
+      }
+
+      const mainTabs: MainTab[] = ['home', 'customers', 'sales', 'accounts'];
+
+      // 3. If on an inner sub-screen (e.g. newBill, booking, customerDetail, shopProfile) without history stack
+      if (!mainTabs.includes(screen as MainTab)) {
+        if (currentUser && currentShop) {
+          handleTabSelect(activeTab || 'home');
+          return true;
+        }
+      }
+
+      // 4. If roaming on another tab (e.g. accounts, sales, customers, appointments), navigate to home
+      if (activeTab !== 'home' || screen !== 'home') {
+        if (currentUser && currentShop) {
+          handleTabSelect('home');
+          return true;
+        }
+      }
+
+      // 5. If on auth sub-screens, navigate back to phone entry
+      if (['otp', 'register', 'workers'].includes(screen)) {
+        setScreen('phone');
+        return true;
+      }
+
+      // 6. If on home page (or unauthenticated phone root), confirm app exit
+      if (screen === 'home' || screen === 'phone') {
+        Alert.alert(
+          'Exit StyleFleet',
+          'Are you sure you want to exit?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Yes',
+              onPress: () => BackHandler.exitApp(),
+            },
+          ],
+          { cancelable: true }
+        );
+        return true;
+      }
+
+      return false;
+    };
+
+    const backHandlerSubscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      onBackPress
+    );
+
+    return () => backHandlerSubscription.remove();
+  }, [screen, activeTab, history, isInitializing, currentUser, currentShop]);
 
   // Auth flow handlers
   const handleSendOtp = async (phone: string) => {
