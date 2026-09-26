@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TextInput,
   TouchableOpacity,
   ScrollView,
+  FlatList,
   StyleSheet,
   ActivityIndicator,
   Alert,
@@ -24,6 +25,65 @@ interface ContactItem {
   phone: string;
   initialDue?: number;
 }
+
+interface ContactRowProps {
+  item: ContactItem;
+  isSelected: boolean;
+  colors: any;
+  onToggle: (id: string) => void;
+  onEdit: (item: ContactItem) => void;
+}
+
+const ContactRow = memo(({ item, isSelected, colors, onToggle, onEdit }: ContactRowProps) => {
+  return (
+    <View
+      style={[
+        styles.contactRow,
+        {
+          backgroundColor: isSelected ? 'rgba(217,164,65,0.12)' : 'transparent',
+          borderBottomColor: colors.divider,
+        },
+      ]}
+    >
+      {/* Checkbox */}
+      <TouchableOpacity
+        activeOpacity={0.8}
+        onPress={() => onToggle(item.id)}
+        style={[
+          styles.checkbox,
+          {
+            borderColor: isSelected ? colors.accent : colors.divider,
+            backgroundColor: isSelected ? colors.accent : 'transparent',
+          },
+        ]}
+      >
+        {isSelected && <Text style={styles.checkMark}>✓</Text>}
+      </TouchableOpacity>
+
+      {/* Contact Info (Tapping opens edit modal) */}
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => onEdit(item)}
+        style={styles.contactInfo}
+      >
+        <Text style={[styles.contactName, { color: colors.text }]} numberOfLines={1}>
+          {item.name}
+        </Text>
+        <Text style={[styles.contactPhone, { color: colors.textDim }]} numberOfLines={1}>
+          +91 {item.phone} {item.initialDue ? `· Due: ₹${item.initialDue}` : ''}
+        </Text>
+      </TouchableOpacity>
+
+      {/* Edit Details Action */}
+      <TouchableOpacity
+        onPress={() => onEdit(item)}
+        style={[styles.editPill, { borderColor: colors.divider }]}
+      >
+        <Text style={[styles.editPillText, { color: colors.accent }]}>Edit / Due</Text>
+      </TouchableOpacity>
+    </View>
+  );
+});
 
 interface CustomerManagerModalProps {
   visible: boolean;
@@ -117,17 +177,35 @@ export const CustomerManagerModal = ({
         return;
       }
 
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers],
-        sort: Contacts.SortTypes.FirstName,
-        pageSize: 100,
-      });
+      const allContacts: Contacts.ExistingContact[] = [];
+      let pageOffset = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (data && data.length > 0) {
+      while (hasMore && pageOffset < 20000) {
+        const response = await Contacts.getContactsAsync({
+          fields: [Contacts.Fields.PhoneNumbers],
+          sort: Contacts.SortTypes.FirstName,
+          pageSize,
+          pageOffset,
+        });
+
+        if (response?.data && response.data.length > 0) {
+          allContacts.push(...response.data);
+        }
+
+        if (response?.hasNextPage && response.data && response.data.length >= pageSize) {
+          pageOffset += pageSize;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      if (allContacts.length > 0) {
         const formatted: ContactItem[] = [];
         const seenNumbers = new Set<string>();
 
-        for (const item of data) {
+        for (const item of allContacts) {
           const contactName = (
             item.name ||
             `${item.firstName || ''} ${item.lastName || ''}`.trim() ||
@@ -195,12 +273,12 @@ export const CustomerManagerModal = ({
   };
 
   // Toggle single selection
-  const toggleContactSelection = (id: string) => {
+  const toggleContactSelection = useCallback((id: string) => {
     setSelectedContactIds((prev) => ({
       ...prev,
       [id]: !prev[id],
     }));
-  };
+  }, []);
 
   // Select / Deselect All
   const handleSelectAll = () => {
@@ -213,13 +291,28 @@ export const CustomerManagerModal = ({
   };
 
   // Open single contact editor
-  const handleEditContact = (contact: ContactItem) => {
+  const handleEditContact = useCallback((contact: ContactItem) => {
     setEditingContact(contact);
     setName(contact.name);
     setPhone(contact.phone);
     setInitialDue(contact.initialDue ? String(contact.initialDue) : '');
     setViewMode('edit_contact');
-  };
+  }, []);
+
+  const renderContactItem = useCallback(
+    ({ item }: { item: ContactItem }) => (
+      <ContactRow
+        item={item}
+        isSelected={!!selectedContactIds[item.id]}
+        colors={colors}
+        onToggle={toggleContactSelection}
+        onEdit={handleEditContact}
+      />
+    ),
+    [selectedContactIds, colors, toggleContactSelection, handleEditContact]
+  );
+
+  const keyExtractor = useCallback((item: ContactItem) => item.id, []);
 
   // Save single contact after edit
   const handleSaveEditedContact = () => {
@@ -478,10 +571,28 @@ export const CustomerManagerModal = ({
                   <Text style={[styles.loadingText, { color: colors.textDim }]}>Loading contacts...</Text>
                 </View>
               ) : (
-                <ScrollView style={styles.contactsList} keyboardShouldPersistTaps="handled">
-                  {filteredContacts.length === 0 ? (
+                <FlatList
+                  data={filteredContacts}
+                  keyExtractor={keyExtractor}
+                  renderItem={renderContactItem}
+                  extraData={selectedContactIds}
+                  initialNumToRender={25}
+                  maxToRenderPerBatch={25}
+                  windowSize={7}
+                  removeClippedSubviews={Platform.OS === 'android'}
+                  keyboardShouldPersistTaps="handled"
+                  style={styles.contactsList}
+                  contentContainerStyle={
+                    filteredContacts.length === 0 ? { flexGrow: 1 } : { paddingBottom: 16 }
+                  }
+                  ListEmptyComponent={
                     <View style={{ paddingVertical: 40, paddingHorizontal: 24, alignItems: 'center' }}>
-                      <Text style={[styles.emptyContactsText, { color: colors.textDim, textAlign: 'center', lineHeight: 20 }]}>
+                      <Text
+                        style={[
+                          styles.emptyContactsText,
+                          { color: colors.textDim, textAlign: 'center', lineHeight: 20 },
+                        ]}
+                      >
                         {permissionError
                           ? permissionError
                           : contactSearch
@@ -506,59 +617,8 @@ export const CustomerManagerModal = ({
                         </Text>
                       </TouchableOpacity>
                     </View>
-                  ) : (
-                    filteredContacts.map((c) => {
-                      const isSelected = !!selectedContactIds[c.id];
-                      return (
-                        <View
-                          key={c.id}
-                          style={[
-                            styles.contactRow,
-                            {
-                              backgroundColor: isSelected ? 'rgba(217,164,65,0.1)' : 'transparent',
-                              borderBottomColor: colors.divider,
-                            },
-                          ]}
-                        >
-                          {/* Checkbox */}
-                          <TouchableOpacity
-                            activeOpacity={0.8}
-                            onPress={() => toggleContactSelection(c.id)}
-                            style={[
-                              styles.checkbox,
-                              {
-                                borderColor: isSelected ? colors.accent : colors.divider,
-                                backgroundColor: isSelected ? colors.accent : 'transparent',
-                              },
-                            ]}
-                          >
-                            {isSelected && <Text style={styles.checkMark}>✓</Text>}
-                          </TouchableOpacity>
-
-                          {/* Contact Info (Tapping opens edit modal) */}
-                          <TouchableOpacity
-                            activeOpacity={0.7}
-                            onPress={() => handleEditContact(c)}
-                            style={styles.contactInfo}
-                          >
-                            <Text style={[styles.contactName, { color: colors.text }]}>{c.name}</Text>
-                            <Text style={[styles.contactPhone, { color: colors.textDim }]}>
-                              +91 {c.phone} {c.initialDue ? `· Due: ₹${c.initialDue}` : ''}
-                            </Text>
-                          </TouchableOpacity>
-
-                          {/* Edit Details Action */}
-                          <TouchableOpacity
-                            onPress={() => handleEditContact(c)}
-                            style={[styles.editPill, { borderColor: colors.divider }]}
-                          >
-                            <Text style={[styles.editPillText, { color: colors.accent }]}>Edit / Due</Text>
-                          </TouchableOpacity>
-                        </View>
-                      );
-                    })
-                  )}
-                </ScrollView>
+                  }
+                />
               )}
 
               {/* Import Action Button */}
@@ -846,7 +906,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   contactsList: {
-    maxHeight: 280,
+    height: 300,
+    maxHeight: 320,
+    flexGrow: 0,
     flexShrink: 1,
     marginBottom: 12,
   },

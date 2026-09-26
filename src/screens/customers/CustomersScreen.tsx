@@ -45,7 +45,7 @@ export const CustomersScreen = ({
   const [activeFilter, setActiveFilter] = useState<'All' | 'MVP ★' | 'Dues'>('All');
   const [modalVisible, setModalVisible] = useState(false);
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null);
-  const [displayLimit, setDisplayLimit] = useState(20);
+  const [displayLimit, setDisplayLimit] = useState(200);
 
   // Frequent customers sorted by visits count
   const sortedCustomers = React.useMemo(() => {
@@ -111,7 +111,7 @@ export const CustomersScreen = ({
           value={query}
           onChangeText={(txt) => {
             setQuery(txt);
-            setDisplayLimit(20);
+            setDisplayLimit(200);
           }}
         />
 
@@ -129,16 +129,23 @@ export const CustomersScreen = ({
               active={activeFilter === filter}
               onPress={() => {
                 setActiveFilter(filter);
-                setDisplayLimit(25);
+                setDisplayLimit(200);
               }}
             />
           ))}
         </View>
 
-        {!isSearching && customers.length > 25 && (
+        {!isSearching && customers.length > 200 && (
           <View style={styles.topNoticeRow}>
             <Text style={[styles.topNoticeText, { color: colors.accent }]}>
-              ⚡ Showing top {displayedCustomers.length} active clients by visits
+              ⚡ Showing {displayedCustomers.length} of {customers.length} clients · Use search to find any client
+            </Text>
+          </View>
+        )}
+        {isSearching && (
+          <View style={styles.topNoticeRow}>
+            <Text style={[styles.topNoticeText, { color: colors.accent }]}>
+              🔍 Found {displayedCustomers.length} client{displayedCustomers.length === 1 ? '' : 's'} matching "{query.trim()}"
             </Text>
           </View>
         )}
@@ -293,11 +300,11 @@ export const CustomersScreen = ({
               styles.loadMoreBtn,
               { borderColor: colors.accent, backgroundColor: colors.surface },
             ]}
-            onPress={() => setDisplayLimit((prev) => prev + 20)}
+            onPress={() => setDisplayLimit((prev) => prev + 100)}
             activeOpacity={0.7}
           >
             <Text style={[styles.loadMoreText, { color: colors.accent }]}>
-              + Load 20 More Clients ({filtered.length - displayLimit} remaining)
+              + Load More Clients ({filtered.length - displayLimit} remaining)
             </Text>
           </TouchableOpacity>
         )}
