@@ -85,6 +85,7 @@ export const AppNavigator = () => {
   const [selectedBill, setSelectedBill] = useState<Bill | null>(null);
   const [pendingAppointmentToBill, setPendingAppointmentToBill] = useState<Appointment | null>(null);
   const [initialBillServiceId, setInitialBillServiceId] = useState<string | null>(null);
+  const [initialBillServiceIds, setInitialBillServiceIds] = useState<string[]>([]);
   const [initialBillStaffId, setInitialBillStaffId] = useState<string | null>(null);
   const [bulkAudience, setBulkAudience] = useState<WhatsAppAudience>({
     id: 1,
@@ -284,6 +285,7 @@ export const AppNavigator = () => {
     setHistory([]);
     setSelectedCustomer(null);
     setInitialBillServiceId(null);
+    setInitialBillServiceIds([]);
     setInitialBillStaffId(null);
     setPendingAppointmentToBill(null);
     setScreen(tab);
@@ -499,6 +501,7 @@ export const AppNavigator = () => {
       );
       setPendingAppointmentToBill(null);
       setInitialBillServiceId(null);
+      setInitialBillServiceIds([]);
       setInitialBillStaffId(null);
     }
 
@@ -535,6 +538,7 @@ export const AppNavigator = () => {
     customerPhone?: string | null;
     serviceName: string;
     serviceId?: string | null;
+    serviceIds?: string[];
     stylistName: string;
     stylistId?: string | null;
     slot: string;
@@ -550,6 +554,7 @@ export const AppNavigator = () => {
       customerPhone: data.customerPhone,
       serviceName: data.serviceName,
       serviceId: data.serviceId,
+      serviceIds: data.serviceIds,
       stylistName: data.stylistName,
       stylistId: data.stylistId,
       slot: data.slot,
@@ -793,6 +798,7 @@ export const AppNavigator = () => {
             onNewBill={() => {
               setSelectedCustomer(null);
               setInitialBillServiceId(null);
+              setInitialBillServiceIds([]);
               setInitialBillStaffId(null);
               setPendingAppointmentToBill(null);
               navigateTo('bill');
@@ -808,10 +814,12 @@ export const AppNavigator = () => {
             bills={bills}
             initialCustomerId={selectedCustomer?.id || null}
             initialServiceId={initialBillServiceId}
+            initialServiceIds={initialBillServiceIds}
             initialStaffId={initialBillStaffId}
             onBack={() => {
               setSelectedCustomer(null);
               setInitialBillServiceId(null);
+              setInitialBillServiceIds([]);
               setInitialBillStaffId(null);
               setPendingAppointmentToBill(null);
               goBack();
@@ -903,7 +911,33 @@ export const AppNavigator = () => {
               } else {
                 setSelectedCustomer(null);
               }
-              setInitialBillServiceId(appt.service_id || null);
+
+              // Pre-fill ALL services from the appointment
+              let allSelectedServiceIds: string[] = [];
+              if (appt.service_ids && appt.service_ids.length > 0) {
+                allSelectedServiceIds = [...appt.service_ids];
+              } else if (appt.service_id) {
+                allSelectedServiceIds = [appt.service_id];
+              }
+
+              // Resilient match: if appointment service_name has multiple services (e.g. "Haircut + Beard Trim + Head Massage")
+              // resolve each service against the shop's services catalog
+              if (appt.service_name && services.length > 0) {
+                const subNames = appt.service_name.split(/\s*\+\s*|\s*,\s*/);
+                for (const name of subNames) {
+                  const cleaned = name.trim().toLowerCase();
+                  if (!cleaned) continue;
+                  const match = services.find(
+                    (s) => s.name.trim().toLowerCase() === cleaned
+                  );
+                  if (match && !allSelectedServiceIds.includes(match.id)) {
+                    allSelectedServiceIds.push(match.id);
+                  }
+                }
+              }
+
+              setInitialBillServiceIds(allSelectedServiceIds);
+              setInitialBillServiceId(allSelectedServiceIds[0] || appt.service_id || null);
               setInitialBillStaffId(appt.staff_id || null);
               setPendingAppointmentToBill(appt);
               navigateTo('bill');

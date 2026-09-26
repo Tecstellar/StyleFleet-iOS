@@ -323,7 +323,7 @@ export const AppointmentsScreen = ({
                     </View>
 
                     <Text
-                      numberOfLines={1}
+                      numberOfLines={2}
                       style={[styles.serviceSub, { color: colors.textDim }]}
                     >
                       {a.service_name} · {a.staff_name || t('anyStylist')} · {inrFromMinor(a.amount_minor || 0)}

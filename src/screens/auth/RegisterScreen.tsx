@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
 import { useTheme } from '../../theme/ThemeContext';
 import { Button } from '../../components/common/Button';
@@ -64,7 +65,23 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const selectedAsset = result.assets[0];
-        setLogoUri(selectedAsset.uri);
+        let permanentUri = selectedAsset.uri;
+
+        if (FileSystem.documentDirectory) {
+          const extension = selectedAsset.uri.split('.').pop() || 'jpg';
+          const destUri = `${FileSystem.documentDirectory}salon_logo_${Date.now()}.${extension}`;
+          try {
+            await FileSystem.copyAsync({
+              from: selectedAsset.uri,
+              to: destUri,
+            });
+            permanentUri = destUri;
+          } catch (copyErr) {
+            console.warn('Registration logo copy fallback to raw URI:', copyErr);
+          }
+        }
+
+        setLogoUri(permanentUri);
         setIsExtractingColor(true);
 
         // Palette tone selection based on brand character

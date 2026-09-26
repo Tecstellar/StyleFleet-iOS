@@ -10,6 +10,8 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -416,7 +418,15 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
         {/* ======================================================== */}
         {/* 1. COMPACT UPLOAD MENU BUTTON                            */}
         {/* ======================================================== */}
@@ -707,12 +717,16 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
           style={{ marginTop: 12 }}
         />
       </ScrollView>
+    </KeyboardAvoidingView>
 
       {/* ======================================================== */}
       {/* EDIT SERVICE MODAL                                       */}
       {/* ======================================================== */}
       <Modal visible={!!editingService} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Service</Text>
@@ -778,14 +792,17 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ======================================================== */}
       {/* ADD OFFER MODAL                                          */}
       {/* ======================================================== */}
       <Modal visible={showAddOfferModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>Create Promotional Offer</Text>
@@ -851,14 +868,17 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ======================================================== */}
       {/* GEMINI API KEY ENTRY MODAL (If key not in env)          */}
       {/* ======================================================== */}
       <Modal visible={showApiKeyModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>Enter Gemini API Key</Text>
@@ -891,7 +911,7 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
               <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>Save API Key</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

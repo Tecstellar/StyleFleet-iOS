@@ -7,6 +7,8 @@ import {
   ScrollView,
   StyleSheet,
   Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
@@ -94,7 +96,11 @@ export const ExpensesScreen = ({
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {/* Total & entries count */}
         <View style={styles.totalRow}>
           <Text style={[styles.totalAmount, { color: colors.text }]}>
@@ -163,92 +169,101 @@ export const ExpensesScreen = ({
         transparent
         onRequestClose={() => setSheetOpen(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View
-            style={[
-              styles.sheetContainer,
-              { backgroundColor: colors.surface },
-            ]}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <ScrollView
+            bounces={false}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={{ flexGrow: 0 }}
           >
-            <View style={styles.sheetHeader}>
-              <Text style={[styles.sheetTitle, { color: colors.text }]}>
-                {t('addExpense')}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setSheetOpen(false)}
-                activeOpacity={0.7}
-                style={{ padding: 4 }}
-              >
-                <CrossIcon size={18} color={colors.textDim} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Category Chips */}
-            <View style={styles.sheetChipsRow}>
-              {EXPENSE_CATEGORIES.map((cat) => (
-                <Chip
-                  key={cat}
-                  label={cat}
-                  active={selectedCat === cat}
-                  onPress={() => setSelectedCat(cat)}
-                  size="sm"
-                />
-              ))}
-            </View>
-
-            {/* Amount & Note Inputs */}
-            <View style={styles.sheetInputsRow}>
-              <View style={{ width: 120 }}>
-                <Text style={[styles.sheetInputLabel, { color: colors.textDim }]}>
-                  {t('amount')} ₹
+            <View
+              style={[
+                styles.sheetContainer,
+                { backgroundColor: colors.surface },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <Text style={[styles.sheetTitle, { color: colors.text }]}>
+                  {t('addExpense')}
                 </Text>
-                <TextInput
-                  style={[
-                    styles.sheetTextInput,
-                    {
-                      backgroundColor: colors.bg,
-                      borderColor: colors.divider,
-                      color: colors.text,
-                    },
-                  ]}
-                  placeholder="0"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  keyboardType="numeric"
-                  value={amountStr}
-                  onChangeText={setAmountStr}
-                />
+                <TouchableOpacity
+                  onPress={() => setSheetOpen(false)}
+                  activeOpacity={0.7}
+                  style={{ padding: 4 }}
+                >
+                  <CrossIcon size={18} color={colors.textDim} />
+                </TouchableOpacity>
               </View>
 
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetInputLabel, { color: colors.textDim }]}>
-                  {t('notes')}
-                </Text>
-                <TextInput
-                  style={[
-                    styles.sheetTextInput,
-                    {
-                      backgroundColor: colors.bg,
-                      borderColor: colors.divider,
-                      color: colors.text,
-                    },
-                  ]}
-                  placeholder="e.g. Products restock"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  value={noteStr}
-                  onChangeText={setNoteStr}
-                />
+              {/* Category Chips */}
+              <View style={styles.sheetChipsRow}>
+                {EXPENSE_CATEGORIES.map((cat) => (
+                  <Chip
+                    key={cat}
+                    label={cat}
+                    active={selectedCat === cat}
+                    onPress={() => setSelectedCat(cat)}
+                    size="sm"
+                  />
+                ))}
               </View>
-            </View>
 
-            <Button
-              label={t('save')}
-              block
-              disabled={!amountStr.trim()}
-              onPress={handleSave}
-              style={{ marginTop: 14 }}
-            />
-          </View>
-        </View>
+              {/* Amount & Note Inputs */}
+              <View style={styles.sheetInputsRow}>
+                <View style={{ width: 120 }}>
+                  <Text style={[styles.sheetInputLabel, { color: colors.textDim }]}>
+                    {t('amount')} ₹
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.sheetTextInput,
+                      {
+                        backgroundColor: colors.bg,
+                        borderColor: colors.divider,
+                        color: colors.text,
+                      },
+                    ]}
+                    placeholder="0"
+                    placeholderTextColor="rgba(255,255,255,0.3)"
+                    keyboardType="numeric"
+                    value={amountStr}
+                    onChangeText={setAmountStr}
+                  />
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.sheetInputLabel, { color: colors.textDim }]}>
+                    {t('notes')}
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.sheetTextInput,
+                      {
+                        backgroundColor: colors.bg,
+                        borderColor: colors.divider,
+                        color: colors.text,
+                      },
+                    ]}
+                    placeholder="e.g. Products restock"
+                    placeholderTextColor="rgba(255,255,255,0.3)"
+                    value={noteStr}
+                    onChangeText={setNoteStr}
+                  />
+                </View>
+              </View>
+
+              <Button
+                label={t('save')}
+                block
+                disabled={!amountStr.trim()}
+                onPress={handleSave}
+                style={{ marginTop: 14 }}
+              />
+            </View>
+          </ScrollView>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

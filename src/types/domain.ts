@@ -109,6 +109,7 @@ export interface Appointment {
   staff_id: string | null;
   staff_name: string;
   service_id: string | null;
+  service_ids?: string[] | null;
   service_name: string;
   starts_at: string;
   duration_minutes: number;

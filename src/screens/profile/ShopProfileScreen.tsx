@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,9 +10,12 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { SUPPORTED_LANGUAGES, LanguageCode } from '../../i18n/translations';
@@ -65,6 +68,13 @@ export const ShopProfileScreen = ({
   const [currentLogo, setCurrentLogo] = useState<string | null>(logoUrl || null);
   const [isUpdatingLogo, setIsUpdatingLogo] = useState(false);
 
+  // Synchronize currentLogo when logoUrl prop updates from parent or database
+  useEffect(() => {
+    if (logoUrl) {
+      setCurrentLogo(logoUrl);
+    }
+  }, [logoUrl]);
+
   // GST Settings
   const [isGstEnabled, setIsGstEnabled] = useState(currentGstRate > 0);
   const [gstRateInput, setGstRateInput] = useState(String(currentGstRate > 0 ? currentGstRate : 18));
@@ -105,11 +115,28 @@ export const ShopProfileScreen = ({
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const newUri = result.assets[0].uri;
+        const pickedUri = result.assets[0].uri;
         setIsUpdatingLogo(true);
-        setCurrentLogo(newUri);
+
+        // Store logo permanently in app documentDirectory so it survives cache purges and reboot
+        let permanentUri = pickedUri;
+        if (FileSystem.documentDirectory) {
+          const extension = pickedUri.split('.').pop() || 'jpg';
+          const destUri = `${FileSystem.documentDirectory}salon_logo_${Date.now()}.${extension}`;
+          try {
+            await FileSystem.copyAsync({
+              from: pickedUri,
+              to: destUri,
+            });
+            permanentUri = destUri;
+          } catch (copyErr) {
+            console.warn('Permanent logo copy fallback to raw URI:', copyErr);
+          }
+        }
+
+        setCurrentLogo(permanentUri);
         if (onUpdateLogo) {
-          await onUpdateLogo(newUri);
+          await onUpdateLogo(permanentUri);
         }
         setIsUpdatingLogo(false);
         Alert.alert('Logo Updated', 'Your salon logo has been saved.');
@@ -211,8 +238,16 @@ export const ShopProfileScreen = ({
         <Text style={[styles.title, { color: colors.text }]}>{t('shopProfile', 'Shop Profile')}</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Shop Info Card with Change Logo */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
+          {/* Shop Info Card with Change Logo */}
         <View style={[styles.shopCard, { backgroundColor: colors.surface }]}>
           <TouchableOpacity
             activeOpacity={0.8}
@@ -420,6 +455,7 @@ export const ShopProfileScreen = ({
           </TouchableOpacity>
         </View>
       </ScrollView>
+    </KeyboardAvoidingView>
 
       {/* LANGUAGE SELECT MODAL */}
       <Modal visible={showLangModal} animationType="slide" transparent>
@@ -500,7 +536,10 @@ export const ShopProfileScreen = ({
 
       {/* SUPPORT HELPDESK MODAL */}
       <Modal visible={showSupportModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>Help Desk Support</Text>
@@ -576,12 +615,15 @@ export const ShopProfileScreen = ({
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* PERMANENT DELETE MODAL */}
       <Modal visible={showDeleteModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.error, maxHeight: '90%' }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.error }]}>Delete Salon Account</Text>
@@ -590,7 +632,7 @@ export const ShopProfileScreen = ({
               </TouchableOpacity>
             </View>
 
-            <ScrollView>
+            <ScrollView keyboardShouldPersistTaps="handled">
               <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 12 }}>
                 ⚠️ <Text style={{ fontWeight: '700', color: colors.error }}>Irreversible Action:</Text> Deleting your account will permanently wipe all bills, clients, staff records, service catalogs, and history for "{shopName}" from the database. If you wish to use StyleFleet again later, you must register as a new business.
               </Text>
@@ -669,7 +711,7 @@ export const ShopProfileScreen = ({
               </TouchableOpacity>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

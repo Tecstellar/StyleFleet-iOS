@@ -9,6 +9,8 @@ import {
   Modal,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
@@ -26,6 +28,7 @@ interface NewBillScreenProps {
   bills?: Bill[];
   initialCustomerId?: string | null;
   initialServiceId?: string | null;
+  initialServiceIds?: string[] | null;
   initialStaffId?: string | null;
   onBack: () => void;
   onAddNewCustomer?: (name: string, phone: string) => Promise<Customer>;
@@ -47,6 +50,7 @@ export const NewBillScreen = ({
   bills = [],
   initialCustomerId = null,
   initialServiceId = null,
+  initialServiceIds = null,
   initialStaffId = null,
   onBack,
   onAddNewCustomer,
@@ -65,10 +69,35 @@ export const NewBillScreen = ({
   const [newClientPhone, setNewClientPhone] = useState('');
   const [isSavingClient, setIsSavingClient] = useState(false);
 
-  // Services, Staff & Discount State
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
-    initialServiceId ? [initialServiceId] : []
-  );
+  // Services, Staff & Discount State (Pre-fills all services from appointment)
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
+    if (initialServiceIds && initialServiceIds.length > 0) {
+      return initialServiceIds;
+    }
+    if (initialServiceId) {
+      return [initialServiceId];
+    }
+    return [];
+  });
+
+  React.useEffect(() => {
+    if (initialServiceIds && initialServiceIds.length > 0) {
+      setSelectedServiceIds(initialServiceIds);
+    } else if (initialServiceId) {
+      setSelectedServiceIds([initialServiceId]);
+    }
+  }, [initialServiceIds, initialServiceId]);
+
+  React.useEffect(() => {
+    setSelectedCustomerId(initialCustomerId);
+  }, [initialCustomerId]);
+
+  React.useEffect(() => {
+    if (initialStaffId) {
+      const idx = staff.findIndex((s) => s.id === initialStaffId);
+      if (idx >= 0) setSelectedStaffIndex(idx);
+    }
+  }, [initialStaffId, staff]);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
   const initialStaffIdx = initialStaffId
     ? staff.findIndex((s) => s.id === initialStaffId)
@@ -721,7 +750,10 @@ export const NewBillScreen = ({
         animationType="slide"
         onRequestClose={() => setIsAddClientModalOpen(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
@@ -765,7 +797,7 @@ export const NewBillScreen = ({
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

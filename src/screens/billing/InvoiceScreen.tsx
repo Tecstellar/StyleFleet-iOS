@@ -51,10 +51,22 @@ export const InvoiceScreen = ({
 
   // Helper to generate the PDF file
   const generatePdfFile = async () => {
-    const safeLogo =
-      shopLogoUrl && (shopLogoUrl.startsWith('http') || shopLogoUrl.startsWith('data:'))
-        ? shopLogoUrl
-        : null;
+    let safeLogo = null;
+    if (shopLogoUrl) {
+      if (shopLogoUrl.startsWith('http') || shopLogoUrl.startsWith('data:')) {
+        safeLogo = shopLogoUrl;
+      } else if (shopLogoUrl.startsWith('file://')) {
+        try {
+          const b64 = await FileSystem.readAsStringAsync(shopLogoUrl, {
+            encoding: FileSystem.EncodingType.Base64,
+          });
+          const ext = shopLogoUrl.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+          safeLogo = `data:image/${ext};base64,${b64}`;
+        } catch {
+          safeLogo = shopLogoUrl;
+        }
+      }
+    }
 
     const html = generateInvoiceHtml({
       bill,

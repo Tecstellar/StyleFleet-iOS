@@ -8,6 +8,8 @@ import {
   TextInput,
   Modal,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
@@ -31,6 +33,7 @@ interface BookingScreenProps {
     customerPhone?: string | null;
     serviceName: string;
     serviceId?: string | null;
+    serviceIds?: string[];
     stylistName: string;
     stylistId?: string | null;
     slot: string;
@@ -219,6 +222,7 @@ export const BookingScreen = ({
       customerPhone: custPhone,
       serviceName: combinedServiceName,
       serviceId: selectedServiceIds[0] || null,
+      serviceIds: selectedServiceIds,
       stylistName: stylistName,
       stylistId: selectedStaffId,
       slot: selectedSlot!,
@@ -747,7 +751,10 @@ export const BookingScreen = ({
       {/* QUICK ADD CLIENT MODAL                                   */}
       {/* ======================================================== */}
       <Modal visible={isAddClientModalOpen} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
           <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
@@ -788,7 +795,7 @@ export const BookingScreen = ({
               <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>{t('save')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

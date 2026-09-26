@@ -3,13 +3,25 @@
     "name": "StyleFleet",
     "slug": "stylefleet",
     "version": "1.0.0",
+    "scheme": "stylefleet",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0b0c15"
+    },
     "ios": {
+      "bundleIdentifier": "com.stylefleet.app",
+      "buildNumber": "1.0.3",
       "supportsTablet": false,
       "infoPlist": {
-        "NSContactsUsageDescription": "StyleFleet needs access to your contacts to import clients into your salon roster."
+        "NSContactsUsageDescription": "StyleFleet needs access to your contacts to import clients into your salon roster.",
+        "NSCameraUsageDescription": "StyleFleet needs access to your camera to capture salon photos and scan service rate cards.",
+        "NSPhotoLibraryUsageDescription": "StyleFleet needs access to your photo library to select salon logos and upload service menus.",
+        "NSLocationWhenInUseUsageDescription": "StyleFleet uses your location to automatically determine your salon address and city.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -27,7 +39,20 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "Salon OS needs access to your contacts to import clients into your salon roster."
+          "contactsPermission": "StyleFleet needs access to your contacts to import clients into your salon roster."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "StyleFleet needs access to your photo library to select salon logos and upload service menus.",
+          "cameraPermission": "StyleFleet needs access to your camera to capture salon photos and scan service rate cards."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "StyleFleet uses your location to automatically determine your salon address and city."
         }
       ],
       "expo-video"

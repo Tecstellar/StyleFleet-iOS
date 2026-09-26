@@ -9,6 +9,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import * as Contacts from 'expo-contacts/legacy';
 import { useTheme } from '../../theme/ThemeContext';
@@ -349,7 +351,10 @@ export const CustomerManagerModal = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide">
-      <View style={styles.modalOverlay}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalOverlay}
+      >
         <View
           style={[
             styles.modalContent,
@@ -591,7 +596,7 @@ export const CustomerManagerModal = ({
                 </TouchableOpacity>
               </View>
 
-              <ScrollView keyboardShouldPersistTaps="handled">
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }}>
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
@@ -650,7 +655,7 @@ export const CustomerManagerModal = ({
                 </TouchableOpacity>
               </View>
 
-              <ScrollView keyboardShouldPersistTaps="handled">
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }}>
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
@@ -730,7 +735,7 @@ export const CustomerManagerModal = ({
             </View>
           )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
@@ -811,6 +816,7 @@ const styles = StyleSheet.create({
   },
   contactsContainer: {
     maxHeight: 520,
+    flexShrink: 1,
   },
   searchInput: {
     height: 44,
@@ -839,6 +845,7 @@ const styles = StyleSheet.create({
   },
   contactsList: {
     maxHeight: 320,
+    flexShrink: 1,
     marginBottom: 14,
   },
   contactRow: {
