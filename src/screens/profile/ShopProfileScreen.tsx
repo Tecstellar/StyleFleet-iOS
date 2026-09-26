@@ -40,8 +40,15 @@ interface ShopProfileScreenProps {
   onBack: () => void;
   onUpdateLogo?: (logoPath: string) => Promise<void>;
   onUpdateGstRate?: (rate: number) => Promise<void>;
+  onUpdateShopDetails?: (details: {
+    name: string;
+    ownerName: string;
+    address: string;
+    city: string;
+    pinCode: string;
+  }) => Promise<void>;
   onAccountDeleted?: () => void;
-  onSignOut: () => void;
+  onSignOut?: () => void;
 }
 
 export const ShopProfileScreen = ({
@@ -59,6 +66,7 @@ export const ShopProfileScreen = ({
   onBack,
   onUpdateLogo,
   onUpdateGstRate,
+  onUpdateShopDetails,
   onAccountDeleted,
   onSignOut,
 }: ShopProfileScreenProps) => {
@@ -75,6 +83,62 @@ export const ShopProfileScreen = ({
     }
   }, [logoUrl]);
 
+  // Edit Shop Profile State
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [editName, setEditName] = useState(shopName);
+  const [editOwnerName, setEditOwnerName] = useState(ownerName);
+  const [editAddress, setEditAddress] = useState(address);
+  const [editCity, setEditCity] = useState(city);
+  const [editPinCode, setEditPinCode] = useState(pinCode);
+  const [isSavingDetails, setIsSavingDetails] = useState(false);
+
+  useEffect(() => {
+    setEditName(shopName);
+    setEditOwnerName(ownerName);
+    setEditAddress(address);
+    setEditCity(city);
+    setEditPinCode(pinCode);
+  }, [shopName, ownerName, address, city, pinCode]);
+
+  const handleSaveShopDetails = async () => {
+    if (!editName.trim()) {
+      Alert.alert('Required', 'Please enter salon name');
+      return;
+    }
+    if (!editAddress.trim()) {
+      Alert.alert('Required', 'Please enter address');
+      return;
+    }
+    if (!editCity.trim()) {
+      Alert.alert('Required', 'Please enter city');
+      return;
+    }
+    const cleanPin = editPinCode.replace(/\D/g, '');
+    if (cleanPin.length !== 6) {
+      Alert.alert('Invalid PIN Code', 'Please enter a valid 6-digit PIN code');
+      return;
+    }
+
+    setIsSavingDetails(true);
+    try {
+      if (onUpdateShopDetails) {
+        await onUpdateShopDetails({
+          name: editName.trim(),
+          ownerName: editOwnerName.trim() || editName.trim(),
+          address: editAddress.trim(),
+          city: editCity.trim(),
+          pinCode: cleanPin,
+        });
+      }
+      setIsSavingDetails(false);
+      setShowEditProfileModal(false);
+      Alert.alert('Profile Updated', 'Salon details saved successfully.');
+    } catch (e: any) {
+      setIsSavingDetails(false);
+      Alert.alert('Notice', e.message || 'Could not update salon profile');
+    }
+  };
+
   // GST Settings
   const [isGstEnabled, setIsGstEnabled] = useState(currentGstRate > 0);
   const [gstRateInput, setGstRateInput] = useState(String(currentGstRate > 0 ? currentGstRate : 18));
@@ -82,22 +146,6 @@ export const ShopProfileScreen = ({
 
   // Language Modal
   const [showLangModal, setShowLangModal] = useState(false);
-
-  // Privacy Policy Modal
-  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
-
-  // Support Help Desk Modal
-  const [showSupportModal, setShowSupportModal] = useState(false);
-  const [supportCategory, setSupportCategory] = useState<'Bug or Technical Issue' | 'Feature Request' | 'Billing & Subscription' | 'General Question'>('Bug or Technical Issue');
-  const [supportPhone, setSupportPhone] = useState(phone);
-  const [supportMessage, setSupportMessage] = useState('');
-  const [isSubmittingSupport, setIsSubmittingSupport] = useState(false);
-
-  // Permanent Delete Modal
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [selectedDeleteReason, setSelectedDeleteReason] = useState<string>('Closing or Pausing Salon Business');
-  const [deleteCustomNote, setDeleteCustomNote] = useState('');
-  const [isDeleting, setIsDeleting] = useState(false);
 
   const handlePickLogo = async () => {
     try {
@@ -171,60 +219,7 @@ export const ShopProfileScreen = ({
     Alert.alert('GST Updated', `GST on services set to ${isGstEnabled ? rate : 0}%.`);
   };
 
-  const handleSendSupportTicket = async () => {
-    if (!supportMessage.trim()) {
-      Alert.alert('Required', 'Please describe your query or problem');
-      return;
-    }
-    setIsSubmittingSupport(true);
-    try {
-      await supportRepository.submitSupportMessage({
-        shop_id: shopId,
-        message: `[${supportCategory}] ${supportMessage.trim()}`,
-        contact_info: supportPhone.trim() || phone,
-      });
-      setIsSubmittingSupport(false);
-      setShowSupportModal(false);
-      setSupportMessage('');
-      Alert.alert('Ticket Submitted', 'Our support team has received your ticket and will contact you shortly.');
-    } catch (e: any) {
-      setIsSubmittingSupport(false);
-      Alert.alert('Notice', e.message || 'Could not submit support ticket');
-    }
-  };
 
-  const handlePermanentDelete = async () => {
-    setIsDeleting(true);
-    try {
-      const fullReason = deleteCustomNote.trim()
-        ? `${selectedDeleteReason} - ${deleteCustomNote.trim()}`
-        : selectedDeleteReason;
-
-      await supportRepository.permanentlyDeleteAccount({
-        shopId,
-        shopName,
-        phone,
-        reason: fullReason,
-      });
-      setIsDeleting(false);
-      setShowDeleteModal(false);
-      Alert.alert(
-        'Account Permanently Deleted',
-        'All your salon data and business records have been completely wiped from the database. You will need to register again if you wish to use StyleFleet.',
-        [
-          {
-            text: 'OK',
-            onPress: () => {
-              if (onAccountDeleted) onAccountDeleted();
-            },
-          },
-        ]
-      );
-    } catch (e: any) {
-      setIsDeleting(false);
-      Alert.alert('Error', e.message || 'Failed to delete account');
-    }
-  };
 
   const currentLangLabel =
     SUPPORTED_LANGUAGES.find((l) => l.code === language)?.nativeLabel || 'English';
@@ -273,9 +268,22 @@ export const ShopProfileScreen = ({
           </TouchableOpacity>
 
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={[styles.shopName, { color: colors.text }]}>{shopName}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+              <Text style={[styles.shopName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+                {editName}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setShowEditProfileModal(true)}
+                activeOpacity={0.75}
+                style={[styles.editProfileBtn, { borderColor: colors.accent, backgroundColor: colors.accent900 }]}
+              >
+                <Text style={{ color: colors.accent100, fontSize: 11.5, fontWeight: '700' }}>
+                  ✎ Edit Profile
+                </Text>
+              </TouchableOpacity>
+            </View>
             <Text style={[styles.shopAddress, { color: colors.textDim }]}>
-              {address}, {city} {pinCode}
+              {editAddress}, {editCity} {editPinCode}
             </Text>
             <TouchableOpacity onPress={handlePickLogo} style={{ marginTop: 4 }}>
               <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
@@ -394,7 +402,7 @@ export const ShopProfileScreen = ({
         <View style={styles.detailsList}>
           <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
             <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Owner</Text>
-            <Text style={[styles.detailValue, { color: colors.text }]}>{ownerName}</Text>
+            <Text style={[styles.detailValue, { color: colors.text }]}>{editOwnerName}</Text>
           </View>
           <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
             <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Login number</Text>
@@ -414,46 +422,7 @@ export const ShopProfileScreen = ({
           </View>
         </View>
 
-        {/* SETTINGS, HELP & PERMANENT DELETE */}
-        <View style={{ gap: 8, marginTop: 8, marginBottom: 24 }}>
-          {/* Privacy Policy */}
-          <TouchableOpacity
-            style={[styles.outlineBtn, { borderColor: colors.divider, backgroundColor: colors.surface }]}
-            onPress={() => setShowPrivacyModal(true)}
-          >
-            <Text style={{ color: colors.text, fontWeight: '500' }}>
-              🛡️ {t('privacyPolicy', 'Privacy Policy & Terms')}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Help Desk Support */}
-          <TouchableOpacity
-            style={[styles.outlineBtn, { borderColor: colors.accent, backgroundColor: colors.accent900 }]}
-            onPress={() => setShowSupportModal(true)}
-          >
-            <Text style={{ color: colors.accent100, fontWeight: '600' }}>
-              💬 {t('helpDesk', 'Help Desk Support')}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Sign Out */}
-          <Button
-            label={t('signOut', 'Sign out')}
-            variant="secondary"
-            block
-            onPress={onSignOut}
-          />
-
-          {/* Permanently Delete Account */}
-          <TouchableOpacity
-            style={[styles.outlineBtn, { borderColor: colors.error, backgroundColor: 'rgba(255, 59, 48, 0.08)', marginTop: 6 }]}
-            onPress={() => setShowDeleteModal(true)}
-          >
-            <Text style={{ color: colors.error, fontWeight: '600' }}>
-              🗑 {t('deleteAccount', 'Permanently Delete Account')}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <View style={{ height: 40 }} />
       </ScrollView>
     </KeyboardAvoidingView>
 
@@ -491,222 +460,84 @@ export const ShopProfileScreen = ({
         </View>
       </Modal>
 
-      {/* PRIVACY POLICY MODAL */}
-      <Modal visible={showPrivacyModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider, maxHeight: '85%' }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Privacy Policy & Data Security</Text>
-              <TouchableOpacity onPress={() => setShowPrivacyModal(false)}>
-                <Text style={{ color: colors.accent, fontSize: 16 }}>Close</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={{ marginTop: 8 }}>
-              <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600', marginBottom: 4 }}>
-                1. Data Ownership & Protection
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 14 }}>
-                All customer records, sales transactions, bills, and team metrics collected in StyleFleet belong exclusively to your salon. Your business data is encrypted and isolated with Supabase Row-Level Security (RLS).
-              </Text>
-
-              <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600', marginBottom: 4 }}>
-                2. No Third-Party Selling
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 14 }}>
-                StyleFleet never sells, leases, or trades your client contacts, phone numbers, or revenue numbers to third-party advertising companies or broker networks.
-              </Text>
-
-              <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600', marginBottom: 4 }}>
-                3. Right to Permanent Deletion
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 14 }}>
-                You have full control of your business data. Choosing "Permanently Delete Account" purges all customer records, bills, service menus, expenses, and staff records from the database immediately.
-              </Text>
-
-              <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600', marginBottom: 4 }}>
-                4. WhatsApp & Invoicing Communications
-              </Text>
-              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 8 }}>
-                Invoices and appointment reminders sent via WhatsApp go through the official WhatsApp application installed on your device or via approved direct gateways.
-              </Text>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      {/* SUPPORT HELPDESK MODAL */}
-      <Modal visible={showSupportModal} animationType="slide" transparent>
+      {/* EDIT PROFILE MODAL */}
+      <Modal visible={showEditProfileModal} animationType="slide" transparent>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
           style={styles.modalOverlay}
         >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider, maxHeight: '88%' }]}>
             <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Help Desk Support</Text>
-              <TouchableOpacity onPress={() => setShowSupportModal(false)}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('editProfile', 'Edit Salon Profile')}</Text>
+              <TouchableOpacity onPress={() => setShowEditProfileModal(false)}>
                 <Text style={{ color: colors.textDim, fontSize: 16 }}>Cancel</Text>
               </TouchableOpacity>
             </View>
 
-            {/* Category Chips */}
-            <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 6 }}>Topic</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-              {(['Bug or Technical Issue', 'Feature Request', 'Billing & Subscription', 'General Question'] as const).map((cat) => {
-                const isSelected = supportCategory === cat;
-                return (
-                  <TouchableOpacity
-                    key={cat}
-                    onPress={() => setSupportCategory(cat)}
-                    style={{
-                      paddingHorizontal: 9,
-                      paddingVertical: 5,
-                      borderRadius: radii.pill,
-                      borderWidth: 1,
-                      borderColor: isSelected ? colors.accent : colors.divider,
-                      backgroundColor: isSelected ? colors.accent900 : colors.bg,
-                    }}
-                  >
-                    <Text style={{ fontSize: 11, color: isSelected ? colors.accent100 : colors.textMuted }}>
-                      {cat}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-
-            {/* Contact Number */}
-            <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Your Callback Number</Text>
-            <TextInput
-              style={[
-                styles.modalInput,
-                { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 10, height: 42 },
-              ]}
-              placeholder="Your phone number"
-              placeholderTextColor={colors.textDim}
-              keyboardType="phone-pad"
-              value={supportPhone}
-              onChangeText={setSupportPhone}
-            />
-
-            {/* Message */}
-            <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Describe Issue or Query</Text>
-            <TextInput
-              style={[
-                styles.modalInput,
-                { height: 85, backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text },
-              ]}
-              multiline
-              numberOfLines={4}
-              placeholder="Provide details so our team can help you promptly..."
-              placeholderTextColor={colors.textDim}
-              value={supportMessage}
-              onChangeText={setSupportMessage}
-            />
-
-            <TouchableOpacity
-              onPress={handleSendSupportTicket}
-              disabled={isSubmittingSupport}
-              style={[styles.modalAddBtn, { backgroundColor: colors.accent, marginTop: 14 }]}
-            >
-              {isSubmittingSupport ? (
-                <ActivityIndicator color="#000" size="small" />
-              ) : (
-                <Text style={{ color: '#000', fontWeight: '600' }}>Submit Support Ticket</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* PERMANENT DELETE MODAL */}
-      <Modal visible={showDeleteModal} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.error, maxHeight: '90%' }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.error }]}>Delete Salon Account</Text>
-              <TouchableOpacity onPress={() => setShowDeleteModal(false)}>
-                <Text style={{ color: colors.textDim, fontSize: 16 }}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 12 }}>
-                ⚠️ <Text style={{ fontWeight: '700', color: colors.error }}>Irreversible Action:</Text> Deleting your account will permanently wipe all bills, clients, staff records, service catalogs, and history for "{shopName}" from the database. If you wish to use StyleFleet again later, you must register as a new business.
-              </Text>
-
-              <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textDim, marginBottom: 8 }}>
-                Reason for leaving:
-              </Text>
-
-              {[
-                'Closing or Pausing Salon Business',
-                'Switching to Another Software',
-                'Encountered Bugs / Technical Difficulties',
-                'Temporary Test Account',
-                'Other Reason',
-              ].map((reason) => {
-                const isSelected = selectedDeleteReason === reason;
-                return (
-                  <TouchableOpacity
-                    key={reason}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedDeleteReason(reason)}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 10,
-                      paddingVertical: 8,
-                      paddingHorizontal: 10,
-                      borderRadius: radii.sm,
-                      borderWidth: 1,
-                      borderColor: isSelected ? colors.error : colors.divider,
-                      backgroundColor: isSelected ? 'rgba(255, 59, 48, 0.1)' : 'transparent',
-                      marginBottom: 6,
-                    }}
-                  >
-                    <View
-                      style={{
-                        width: 14,
-                        height: 14,
-                        borderRadius: 7,
-                        borderWidth: 1.5,
-                        borderColor: isSelected ? colors.error : colors.textSubtle,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      {isSelected && (
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.error }} />
-                      )}
-                    </View>
-                    <Text style={{ fontSize: 12.5, color: colors.text }}>{reason}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-
+            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+              {/* Salon Name */}
+              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('salonName', 'Salon Name')}</Text>
               <TextInput
-                style={[
-                  styles.modalInput,
-                  { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 8, height: 42 },
-                ]}
-                placeholder="Additional feedback (optional)"
+                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
+                placeholder="e.g. Blade & Shears"
                 placeholderTextColor={colors.textDim}
-                value={deleteCustomNote}
-                onChangeText={setDeleteCustomNote}
+                value={editName}
+                onChangeText={setEditName}
+              />
+
+              {/* Owner Name */}
+              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('ownerName', 'Owner Name')}</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
+                placeholder="e.g. Vikram Sharma"
+                placeholderTextColor={colors.textDim}
+                value={editOwnerName}
+                onChangeText={setEditOwnerName}
+              />
+
+              {/* Address */}
+              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('address', 'Address')}</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
+                placeholder="Shop number, building, street"
+                placeholderTextColor={colors.textDim}
+                value={editAddress}
+                onChangeText={setEditAddress}
+              />
+
+              {/* City */}
+              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('city', 'City')}</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
+                placeholder="e.g. Mumbai, Bengaluru"
+                placeholderTextColor={colors.textDim}
+                value={editCity}
+                onChangeText={setEditCity}
+              />
+
+              {/* PIN Code */}
+              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('pinCode', '6-Digit PIN Code')}</Text>
+              <TextInput
+                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 16 }]}
+                placeholder="e.g. 560001"
+                placeholderTextColor={colors.textDim}
+                keyboardType="numeric"
+                maxLength={6}
+                value={editPinCode}
+                onChangeText={setEditPinCode}
               />
 
               <TouchableOpacity
-                onPress={handlePermanentDelete}
-                disabled={isDeleting}
-                style={[styles.modalAddBtn, { backgroundColor: colors.error, marginTop: 14 }]}
+                onPress={handleSaveShopDetails}
+                disabled={isSavingDetails}
+                activeOpacity={0.8}
+                style={[styles.modalAddBtn, { backgroundColor: colors.accent, marginTop: 4 }]}
               >
-                {isDeleting ? (
-                  <ActivityIndicator color="#FFF" size="small" />
+                {isSavingDetails ? (
+                  <ActivityIndicator color="#0D0E11" size="small" />
                 ) : (
-                  <Text style={{ color: '#FFF', fontWeight: '700' }}>Confirm Permanent Deletion</Text>
+                  <Text style={{ color: '#0D0E11', fontWeight: '700', fontSize: 14 }}>Save Salon Profile</Text>
                 )}
               </TouchableOpacity>
             </ScrollView>
@@ -918,6 +749,17 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  editProfileBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  fieldLabel: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    marginBottom: 5,
   },
   langOptionRow: {
     flexDirection: 'row',

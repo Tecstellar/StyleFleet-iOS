@@ -49,6 +49,7 @@ interface AccountsScreenProps {
       | 'profile'
   ) => void;
   onAccountDeleted?: () => void;
+  onSignOut?: () => void;
 }
 
 export const AccountsScreen = ({
@@ -60,6 +61,7 @@ export const AccountsScreen = ({
   userPhone = '',
   onNavigate,
   onAccountDeleted,
+  onSignOut,
 }: AccountsScreenProps) => {
   const { colors } = useTheme();
   const { language, setLanguage, t } = useLanguage();
@@ -70,6 +72,62 @@ export const AccountsScreen = ({
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showFaqModal, setShowFaqModal] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
+
+  // Permanent Delete Modal
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [selectedDeleteReason, setSelectedDeleteReason] = useState<string>('Closing or Pausing Salon Business');
+  const [deleteCustomNote, setDeleteCustomNote] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const handleSignOut = () => {
+    Alert.alert(
+      t('signOut', 'Sign Out'),
+      'Are you sure you want to sign out of your salon account?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: t('signOut', 'Sign Out'),
+          style: 'destructive',
+          onPress: () => {
+            if (onSignOut) onSignOut();
+          },
+        },
+      ]
+    );
+  };
+
+  const handlePermanentDelete = async () => {
+    setIsDeleting(true);
+    try {
+      const fullReason = deleteCustomNote.trim()
+        ? `${selectedDeleteReason} - ${deleteCustomNote.trim()}`
+        : selectedDeleteReason;
+
+      await supportRepository.permanentlyDeleteAccount({
+        shopId,
+        shopName,
+        phone: userPhone,
+        reason: fullReason,
+      });
+      setIsDeleting(false);
+      setShowDeleteModal(false);
+      Alert.alert(
+        'Account Permanently Deleted',
+        'All your salon data and business records have been completely wiped from the database. You will need to register again if you wish to use StyleFleet.',
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (onAccountDeleted) onAccountDeleted();
+            },
+          },
+        ]
+      );
+    } catch (e: any) {
+      setIsDeleting(false);
+      Alert.alert('Error', e.message || 'Failed to delete account');
+    }
+  };
 
   // Support ticket form
   const [supportMessage, setSupportMessage] = useState('');
@@ -413,7 +471,7 @@ export const AccountsScreen = ({
 
           {/* Help Desk Support */}
           <TouchableOpacity
-            style={[styles.settingsRow, { borderBottomWidth: 0 }]}
+            style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
             onPress={() => setShowSupportModal(true)}
             activeOpacity={0.7}
           >
@@ -428,6 +486,40 @@ export const AccountsScreen = ({
             <View style={[styles.supportBadge, { backgroundColor: colors.accent800 }]}>
               <Text style={[styles.supportBadgeText, { color: colors.accent100 }]}>Support</Text>
             </View>
+          </TouchableOpacity>
+
+          {/* Sign Out */}
+          <TouchableOpacity
+            style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
+            onPress={handleSignOut}
+            activeOpacity={0.7}
+          >
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
+                🚪 {t('signOut', 'Sign Out')}
+              </Text>
+              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+                Sign out of your salon on this device
+              </Text>
+            </View>
+            <Text style={{ color: colors.textDim, fontSize: 18 }}>›</Text>
+          </TouchableOpacity>
+
+          {/* Permanently Delete Account */}
+          <TouchableOpacity
+            style={[styles.settingsRow, { borderBottomWidth: 0 }]}
+            onPress={() => setShowDeleteModal(true)}
+            activeOpacity={0.7}
+          >
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.error }]}>
+                🗑️ {t('deleteAccount', 'Permanently Delete Account')}
+              </Text>
+              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+                Wipe all shop and customer records permanently
+              </Text>
+            </View>
+            <Text style={{ color: colors.error, fontSize: 18 }}>›</Text>
           </TouchableOpacity>
         </View>
 
@@ -670,6 +762,104 @@ export const AccountsScreen = ({
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* ---------------------------------------------------- */}
+      {/* 6. PERMANENT DELETE ACCOUNT MODAL                   */}
+      {/* ---------------------------------------------------- */}
+      <Modal visible={showDeleteModal} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.modalOverlay}
+        >
+          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.error, maxHeight: '90%' }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.error }]}>Delete Salon Account</Text>
+              <TouchableOpacity onPress={() => setShowDeleteModal(false)}>
+                <Text style={{ color: colors.textDim, fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView keyboardShouldPersistTaps="handled">
+              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 12, marginTop: 8 }}>
+                ⚠️ <Text style={{ fontWeight: '700', color: colors.error }}>Irreversible Action:</Text> Deleting your account will permanently wipe all bills, clients, staff records, service catalogs, and history for "{shopName}" from the database.
+              </Text>
+
+              <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textDim, marginBottom: 8 }}>
+                Reason for leaving:
+              </Text>
+
+              {[
+                'Closing or Pausing Salon Business',
+                'Switching to Another Software',
+                'Encountered Bugs / Technical Difficulties',
+                'Temporary Test Account',
+                'Other Reason',
+              ].map((reason) => {
+                const isSelected = selectedDeleteReason === reason;
+                return (
+                  <TouchableOpacity
+                    key={reason}
+                    activeOpacity={0.8}
+                    onPress={() => setSelectedDeleteReason(reason)}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: 10,
+                      paddingVertical: 8,
+                      paddingHorizontal: 10,
+                      borderRadius: radii.sm,
+                      borderWidth: 1,
+                      borderColor: isSelected ? colors.error : colors.divider,
+                      backgroundColor: isSelected ? 'rgba(255, 59, 48, 0.1)' : 'transparent',
+                      marginBottom: 6,
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: 7,
+                        borderWidth: 1.5,
+                        borderColor: isSelected ? colors.error : colors.textSubtle,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {isSelected && (
+                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.error }} />
+                      )}
+                    </View>
+                    <Text style={{ fontSize: 12.5, color: colors.text }}>{reason}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+
+              <TextInput
+                style={[
+                  styles.contactInput,
+                  { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 8, height: 42, marginBottom: 14 },
+                ]}
+                placeholder="Additional feedback (optional)"
+                placeholderTextColor={colors.textDim}
+                value={deleteCustomNote}
+                onChangeText={setDeleteCustomNote}
+              />
+
+              <TouchableOpacity
+                onPress={handlePermanentDelete}
+                disabled={isDeleting}
+                style={[styles.primaryModalButton, { backgroundColor: colors.error }]}
+              >
+                {isDeleting ? (
+                  <ActivityIndicator color="#FFF" size="small" />
+                ) : (
+                  <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Confirm Permanent Deletion</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

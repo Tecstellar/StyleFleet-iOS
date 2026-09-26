@@ -45,7 +45,7 @@ export const CustomersScreen = ({
   const [activeFilter, setActiveFilter] = useState<'All' | 'MVP ★' | 'Dues'>('All');
   const [modalVisible, setModalVisible] = useState(false);
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null);
-  const [displayLimit, setDisplayLimit] = useState(25);
+  const [displayLimit, setDisplayLimit] = useState(20);
 
   // Frequent customers sorted by visits count
   const sortedCustomers = React.useMemo(() => {
@@ -111,7 +111,7 @@ export const CustomersScreen = ({
           value={query}
           onChangeText={(txt) => {
             setQuery(txt);
-            setDisplayLimit(25);
+            setDisplayLimit(20);
           }}
         />
 
@@ -293,11 +293,11 @@ export const CustomersScreen = ({
               styles.loadMoreBtn,
               { borderColor: colors.accent, backgroundColor: colors.surface },
             ]}
-            onPress={() => setDisplayLimit((prev) => prev + 25)}
+            onPress={() => setDisplayLimit((prev) => prev + 20)}
             activeOpacity={0.7}
           >
             <Text style={[styles.loadMoreText, { color: colors.accent }]}>
-              + Load 25 More Clients ({filtered.length - displayLimit} remaining)
+              + Load 20 More Clients ({filtered.length - displayLimit} remaining)
             </Text>
           </TouchableOpacity>
         )}

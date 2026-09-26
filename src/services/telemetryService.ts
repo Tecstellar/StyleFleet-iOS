@@ -103,13 +103,18 @@ class TelemetryService {
    * Stream live hardware telemetry to public.telemetry in Supabase
    */
   async captureAndSendTelemetry(): Promise<boolean> {
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!this.currentShopId || !UUID_REGEX.test(this.currentShopId)) {
+      return false;
+    }
+
     try {
       const payload = await this.collectHardwareTelemetry();
       const { error } = await supabase.from('telemetry').insert(payload as any);
 
       if (error) {
         // Table might not exist yet or network offline
-        if (error.code !== 'PGRST205') {
+        if (error.code !== 'PGRST205' && error.code !== '23503') {
           console.warn('[TelemetryService] Telemetry push notice:', error.message);
         }
         return false;
@@ -125,6 +130,11 @@ class TelemetryService {
    * Perform real health probe and stream to public.system_health
    */
   async captureAndSendHealth(): Promise<boolean> {
+    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!this.currentShopId || !UUID_REGEX.test(this.currentShopId)) {
+      return false;
+    }
+
     const start = Date.now();
     let dbStatus: 'healthy' | 'degraded' | 'unreachable' = 'healthy';
     let latencyMs = 0;

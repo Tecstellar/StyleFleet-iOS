@@ -15,6 +15,10 @@ export interface AuthUser {
 }
 
 export class AuthRepository {
+  private lastSentPhone: string | null = null;
+  private lastSentTime: number = 0;
+  private lastSessionId: string | null = null;
+
   /**
    * Request 6-digit OTP for a 10-digit mobile number via 2Factor Login_Verification_OTP
    */
@@ -24,26 +28,21 @@ export class AuthRepository {
       return { success: false, error: 'Please enter a valid 10-digit mobile number' };
     }
 
-    try {
-      // 1. First attempt: Supabase Edge Function (serverless security layer)
-      const { data, error } = await supabase.functions.invoke('otp-service', {
-        body: { action: 'send', phone: clean },
-      });
-
-      if (!error && data && data.success) {
-        return { success: true, sessionId: data.sessionId };
-      }
-    } catch {
-      // Edge function may not be deployed yet; fallback to direct 2Factor API
+    // Cooldown check (15 seconds) to prevent duplicate triggers from double taps or quick resends
+    if (this.lastSentPhone === clean && Date.now() - this.lastSentTime < 15000 && this.lastSessionId) {
+      return { success: true, sessionId: this.lastSessionId };
     }
 
     try {
-      // 2. Direct 2Factor API with Login_Verification_OTP template (generates 6-digit OTP)
+      // Direct single 2Factor API with Login_Verification_OTP template (generates 6-digit OTP)
       const url = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/${clean}/AUTOGEN/${TWO_FACTOR_TEMPLATE}`;
       const res = await fetch(url);
       const json = await res.json();
 
       if (json && json.Status === 'Success') {
+        this.lastSentPhone = clean;
+        this.lastSentTime = Date.now();
+        this.lastSessionId = json.Details;
         return { success: true, sessionId: json.Details };
       } else if (json && json.Details) {
         console.warn('2Factor error response:', json.Details);
@@ -52,10 +51,14 @@ export class AuthRepository {
       console.warn('2Factor direct fetch error:', e.message);
     }
 
-    // 3. Fallback: generate development session
+    // Fallback: generate development session
+    const mockSession = `mock_sess_${Date.now()}`;
+    this.lastSentPhone = clean;
+    this.lastSentTime = Date.now();
+    this.lastSessionId = mockSession;
     return {
       success: true,
-      sessionId: `mock_sess_${Date.now()}`,
+      sessionId: mockSession,
     };
   }
 
@@ -73,26 +76,8 @@ export class AuthRepository {
     }
 
     try {
-      // 1. Try Supabase Edge Function verification
+      // 1. Direct 2Factor SMS verify endpoint
       if (sessionId && !sessionId.startsWith('mock_')) {
-        try {
-          const { data, error } = await supabase.functions.invoke('otp-service', {
-            body: { action: 'verify', phone: clean, otp, sessionId },
-          });
-
-          if (!error && data && data.success) {
-            const authUser: AuthUser = {
-              id: data.auth?.userId || `user_${clean}`,
-              phone: clean,
-            };
-            await this.saveSession(authUser);
-            return { success: true, user: authUser };
-          }
-        } catch {
-          // Fall through to direct verification
-        }
-
-        // 2. Direct 2Factor SMS verify endpoint
         try {
           const verifyUrl = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/VERIFY/${sessionId}/${otp}`;
           const res = await fetch(verifyUrl);
@@ -109,7 +94,7 @@ export class AuthRepository {
         }
       }
 
-      // 3. Development / Demo OTP bypass (123456 or mock session)
+      // 2. Development / Demo OTP bypass (123456 or mock session)
       if (otp === '123456' || sessionId?.startsWith('mock_')) {
         const authUser = await this.establishSupabaseSession(clean);
         return { success: true, user: authUser };

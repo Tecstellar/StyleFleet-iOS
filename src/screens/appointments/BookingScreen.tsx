@@ -65,10 +65,8 @@ export const BookingScreen = ({
   const [newClientName, setNewClientName] = useState('');
   const [newClientPhone, setNewClientPhone] = useState('');
 
-  // Service multi-selection & Expand state
-  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(
-    services[0]?.id ? [services[0].id] : []
-  );
+  // Service multi-selection & Expand state (Default to 0 selected services)
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
 
   // Stylist selection: -1 means "Any Stylist / No Stylist"
@@ -156,32 +154,7 @@ export const BookingScreen = ({
     );
   };
 
-  // Categorised service groups
-  const categoryGroups = useMemo(() => {
-    const categories = ['Hair', 'Beard', 'Colour', 'Care', 'Packages'] as const;
-    const groups: { category: string; services: Service[] }[] = [];
 
-    for (const cat of categories) {
-      const catServices = services.filter((s) => s.category_name === cat);
-      if (catServices.length > 0) {
-        groups.push({ category: cat, services: catServices });
-      }
-    }
-
-    const otherServices = services.filter(
-      (s) => !categories.includes(s.category_name as any)
-    );
-    if (otherServices.length > 0) {
-      groups.push({ category: 'Other Services', services: otherServices });
-    }
-
-    return groups;
-  }, [services]);
-
-  // Popular services sorted at top
-  const popularServices = useMemo(() => {
-    return services.slice(0, 6);
-  }, [services]);
 
   const handleQuickAddClient = async () => {
     if (!newClientName.trim()) {
@@ -414,26 +387,57 @@ export const BookingScreen = ({
         )}
 
         {/* ======================================================== */}
-        {/* 2. SERVICES (Expandable Multi-Choice)                   */}
+        {/* 2. SERVICES (Single Collapsible Box with 3-in-a-row Grid) */}
         {/* ======================================================== */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 18 }}>
-          <Text style={[styles.sectionLabel, { color: colors.textDim }]}>
-            {t('services')} ({selectedServices.length} selected)
-          </Text>
-          <TouchableOpacity
-            activeOpacity={0.75}
-            onPress={() => setIsServicesExpanded(!isServicesExpanded)}
-            style={[styles.expandToggleBtn, { borderColor: colors.accent, backgroundColor: colors.accent900 }]}
-          >
-            <Text style={{ color: colors.accent100, fontSize: 12, fontWeight: '600' }}>
-              {isServicesExpanded ? '▲ Collapse' : '▼ Expand all services'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
+          {t('services')}
+        </Text>
 
-        {/* Selected Services Preview Bar */}
+        {/* The One Box: "Choose services to select" */}
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setIsServicesExpanded(!isServicesExpanded)}
+          style={[
+            styles.chooseServicesBox,
+            {
+              backgroundColor: colors.surface,
+              borderColor: isServicesExpanded || selectedServices.length > 0 ? colors.accent : colors.divider,
+            },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.chooseServicesTitle, { color: colors.text }]}>
+              Choose services to select
+            </Text>
+            <Text
+              style={[
+                styles.chooseServicesSub,
+                { color: selectedServices.length > 0 ? colors.accent : colors.textDim },
+              ]}
+            >
+              {selectedServices.length > 0
+                ? `${selectedServices.length} selected · Total: ₹${totalBookingRupees}`
+                : 'Tap to expand & select salon services'}
+            </Text>
+          </View>
+          <View
+            style={[
+              styles.expandArrowBadge,
+              {
+                backgroundColor: isServicesExpanded ? colors.accent : colors.bg,
+                borderColor: colors.divider,
+              },
+            ]}
+          >
+            <Text style={{ color: isServicesExpanded ? '#0D0E11' : colors.accent, fontSize: 13, fontWeight: '700' }}>
+              {isServicesExpanded ? '▲' : '▼'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Selected Services Preview Tags */}
         {selectedServices.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
             {selectedServices.map((s) => (
               <View
                 key={`sel_${s.id}`}
@@ -443,7 +447,7 @@ export const BookingScreen = ({
                 <Text style={{ color: colors.accent200, fontSize: 11, marginLeft: 6 }}>
                   {inrFromMinor(s.price_minor)}
                 </Text>
-                <TouchableOpacity onPress={() => toggleService(s.id)} style={{ marginLeft: 6 }}>
+                <TouchableOpacity onPress={() => toggleService(s.id)} style={{ marginLeft: 6, paddingHorizontal: 2 }}>
                   <Text style={{ color: colors.textDim, fontSize: 11 }}>✕</Text>
                 </TouchableOpacity>
               </View>
@@ -451,10 +455,18 @@ export const BookingScreen = ({
           </ScrollView>
         )}
 
-        {/* Collapsed View: Quick Top Services */}
-        {!isServicesExpanded && (
-          <View style={styles.serviceChipsGrid}>
-            {popularServices.map((s) => {
+        {/* Expanded View: All services in ONE container with 3 services in one line */}
+        {isServicesExpanded && (
+          <View
+            style={[
+              styles.threePerLineContainer,
+              {
+                backgroundColor: colors.surface,
+                borderColor: colors.divider,
+              },
+            ]}
+          >
+            {services.map((s) => {
               const isSelected = selectedServiceIds.includes(s.id);
               return (
                 <TouchableOpacity
@@ -462,84 +474,47 @@ export const BookingScreen = ({
                   activeOpacity={0.75}
                   onPress={() => toggleService(s.id)}
                   style={[
-                    styles.serviceChip,
+                    styles.threeColumnCard,
                     {
                       borderColor: isSelected ? colors.accent : colors.divider,
-                      backgroundColor: isSelected ? colors.accent900 : colors.surface,
+                      backgroundColor: isSelected ? colors.accent900 : colors.bg,
                     },
                   ]}
                 >
-                  <Text style={[styles.serviceChipName, { color: isSelected ? colors.accent100 : colors.text }]}>
-                    {s.name}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.serviceChipPrice,
-                      { color: isSelected ? colors.accent200 : colors.textDim },
-                    ]}
-                  >
-                    {inrFromMinor(s.price_minor)}
-                  </Text>
+                  <View style={styles.threeColumnTopRow}>
+                    <Text
+                      numberOfLines={2}
+                      style={[
+                        styles.threeColumnName,
+                        { color: isSelected ? colors.accent100 : colors.text },
+                      ]}
+                    >
+                      {s.name}
+                    </Text>
+                    {isSelected && (
+                      <View style={[styles.miniCheckBadge, { backgroundColor: colors.accent }]}>
+                        <Text style={{ color: '#0D0E11', fontSize: 8, fontWeight: '800' }}>✓</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={{ marginTop: 'auto' }}>
+                    <Text
+                      style={[
+                        styles.threeColumnPrice,
+                        { color: isSelected ? colors.accent200 : colors.textMuted },
+                      ]}
+                    >
+                      {inrFromMinor(s.price_minor)}
+                    </Text>
+                    {s.duration_minutes ? (
+                      <Text style={{ color: colors.textDim, fontSize: 9.5, marginTop: 1 }}>
+                        {s.duration_minutes}m
+                      </Text>
+                    ) : null}
+                  </View>
                 </TouchableOpacity>
               );
             })}
-          </View>
-        )}
-
-        {/* Expanded View: Full Categorized Services with Checkboxes */}
-        {isServicesExpanded && (
-          <View style={styles.expandedServicesBlock}>
-            {categoryGroups.map((group) => (
-              <View key={group.category} style={styles.categoryBlock}>
-                <Text style={[styles.categoryHeader, { color: colors.accent }]}>
-                  {group.category.toUpperCase()}
-                </Text>
-                <View style={styles.expandedGrid}>
-                  {group.services.map((s) => {
-                    const isSelected = selectedServiceIds.includes(s.id);
-                    return (
-                      <TouchableOpacity
-                        key={s.id}
-                        activeOpacity={0.75}
-                        onPress={() => toggleService(s.id)}
-                        style={[
-                          styles.serviceRowItem,
-                          {
-                            borderColor: isSelected ? colors.accent : colors.divider,
-                            backgroundColor: isSelected ? colors.accent900 : colors.surface,
-                          },
-                        ]}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text style={[styles.serviceChipName, { color: isSelected ? colors.accent100 : colors.text }]}>
-                            {s.name}
-                          </Text>
-                          <Text style={{ color: colors.textDim, fontSize: 11, marginTop: 2 }}>
-                            {s.duration_minutes || 30} mins
-                          </Text>
-                        </View>
-                        <View style={{ alignItems: 'flex-end', gap: 4 }}>
-                          <Text style={[styles.serviceChipPrice, { color: isSelected ? colors.accent200 : colors.textMuted }]}>
-                            {inrFromMinor(s.price_minor)}
-                          </Text>
-                          <View
-                            style={[
-                              styles.checkCircle,
-                              {
-                                borderColor: isSelected ? colors.accent : colors.divider,
-                                backgroundColor: isSelected ? colors.accent : 'transparent',
-                              },
-                            ]}
-                          >
-                            {isSelected && <Text style={{ color: '#000', fontSize: 10, fontWeight: '700' }}>✓</Text>}
-                          </View>
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-            ))}
           </View>
         )}
 
@@ -1049,6 +1024,73 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
   },
+  chooseServicesBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginBottom: 6,
+  },
+  chooseServicesTitle: {
+    fontSize: 13.5,
+    fontWeight: '600',
+  },
+  chooseServicesSub: {
+    fontSize: 11.5,
+    marginTop: 2,
+  },
+  expandArrowBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  threePerLineContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    padding: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  threeColumnCard: {
+    width: '31.3%',
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 76,
+    justifyContent: 'space-between',
+  },
+  threeColumnTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  threeColumnName: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    flex: 1,
+    lineHeight: 15,
+  },
+  miniCheckBadge: {
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 3,
+  },
+  threeColumnPrice: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 4,
+  },
   selectedServiceTag: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1057,38 +1099,5 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
     marginRight: 6,
-  },
-  expandedServicesBlock: {
-    gap: 12,
-    marginTop: 8,
-  },
-  categoryBlock: {
-    marginBottom: 10,
-  },
-  categoryHeader: {
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  expandedGrid: {
-    gap: 6,
-  },
-  serviceRowItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: radii.md,
-    borderWidth: 1,
-  },
-  checkCircle: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

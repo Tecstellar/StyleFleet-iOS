@@ -396,6 +396,24 @@ export const AppNavigator = () => {
     }
   };
 
+  const handleSignOut = async () => {
+    await authRepository.signOut();
+    await shopRepository.clearCachedShop();
+    await AsyncStorage.removeItem('@salon_os_last_phone');
+    setCurrentUser(null);
+    setCurrentShop(null);
+    setBills([]);
+    setCustomers([]);
+    setStaff([]);
+    setExpenses([]);
+    setAppointments([]);
+    setReminders([]);
+    setCategories([]);
+    setServices([]);
+    setInitialDestination('phone');
+    setScreen('phone');
+  };
+
   const handleRegisterNext = (data: ShopRegistrationData) => {
     setPendingRegistration(data);
     navigateTo('workers');
@@ -869,20 +887,8 @@ export const AppNavigator = () => {
             shopName={currentShop?.name || 'My Salon'}
             userPhone={currentShop?.phone || authPhone}
             onNavigate={(dest) => navigateTo(dest)}
-            onAccountDeleted={() => {
-              setCurrentUser(null);
-              setCurrentShop(null);
-              setBills([]);
-              setCustomers([]);
-              setStaff([]);
-              setExpenses([]);
-              setAppointments([]);
-              setReminders([]);
-              setCategories([]);
-              setServices([]);
-              setScreen('splash');
-              setInitialDestination('phone');
-            }}
+            onSignOut={handleSignOut}
+            onAccountDeleted={handleSignOut}
           />
         )}
 
@@ -1104,36 +1110,19 @@ export const AppNavigator = () => {
               await shopRepository.updateShop(currentShop.id, { gst_rate: gstRate });
               setCurrentShop((prev) => (prev ? { ...prev, gst_rate: gstRate } : null));
             }}
-            onAccountDeleted={async () => {
-              await authRepository.signOut();
-              await shopRepository.clearCachedShop();
-              await AsyncStorage.removeItem('@salon_os_last_phone');
-              setCurrentUser(null);
-              setCurrentShop(null);
-              setBills([]);
-              setCustomers([]);
-              setStaff([]);
-              setExpenses([]);
-              setAppointments([]);
-              setReminders([]);
-              setInitialDestination('phone');
-              setScreen('phone');
+            onUpdateShopDetails={async (details) => {
+              const updated = await shopRepository.updateShop(currentShop.id, {
+                name: details.name,
+                address: details.address,
+                city: details.city,
+                pin_code: details.pinCode,
+              });
+              if (updated) {
+                setCurrentShop(updated);
+              }
             }}
-            onSignOut={async () => {
-              await authRepository.signOut();
-              await shopRepository.clearCachedShop();
-              await AsyncStorage.removeItem('@salon_os_last_phone');
-              setCurrentUser(null);
-              setCurrentShop(null);
-              setBills([]);
-              setCustomers([]);
-              setStaff([]);
-              setExpenses([]);
-              setAppointments([]);
-              setReminders([]);
-              setInitialDestination('phone');
-              setScreen('phone');
-            }}
+            onAccountDeleted={handleSignOut}
+            onSignOut={handleSignOut}
           />
         )}
       </View>

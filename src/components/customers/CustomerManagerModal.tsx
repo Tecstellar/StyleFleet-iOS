@@ -120,6 +120,7 @@ export const CustomerManagerModal = ({
       const { data } = await Contacts.getContactsAsync({
         fields: [Contacts.Fields.PhoneNumbers],
         sort: Contacts.SortTypes.FirstName,
+        pageSize: 100,
       });
 
       if (data && data.length > 0) {
@@ -353,6 +354,7 @@ export const CustomerManagerModal = ({
     <Modal visible={visible} transparent animationType="slide">
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
         style={styles.modalOverlay}
       >
         <View
@@ -844,9 +846,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   contactsList: {
-    maxHeight: 320,
+    maxHeight: 280,
     flexShrink: 1,
-    marginBottom: 14,
+    marginBottom: 12,
   },
   contactRow: {
     flexDirection: 'row',

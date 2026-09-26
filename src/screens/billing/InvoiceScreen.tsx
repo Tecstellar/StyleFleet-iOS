@@ -49,24 +49,28 @@ export const InvoiceScreen = ({
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
 
+  // Helper to ensure logo is correctly base64-encoded for PDF and Print
+  const getSafeLogoUri = async (): Promise<string | null> => {
+    if (!shopLogoUrl) return null;
+    if (shopLogoUrl.startsWith('http') || shopLogoUrl.startsWith('data:')) {
+      return shopLogoUrl;
+    }
+    try {
+      const fileUri = shopLogoUrl.startsWith('file://') ? shopLogoUrl : `file://${shopLogoUrl}`;
+      const b64 = await FileSystem.readAsStringAsync(fileUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      const ext = shopLogoUrl.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
+      return `data:image/${ext};base64,${b64}`;
+    } catch (e) {
+      console.warn('[InvoiceScreen] Failed to read logo as base64:', e);
+      return shopLogoUrl;
+    }
+  };
+
   // Helper to generate the PDF file
   const generatePdfFile = async () => {
-    let safeLogo = null;
-    if (shopLogoUrl) {
-      if (shopLogoUrl.startsWith('http') || shopLogoUrl.startsWith('data:')) {
-        safeLogo = shopLogoUrl;
-      } else if (shopLogoUrl.startsWith('file://')) {
-        try {
-          const b64 = await FileSystem.readAsStringAsync(shopLogoUrl, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          const ext = shopLogoUrl.toLowerCase().endsWith('.png') ? 'png' : 'jpeg';
-          safeLogo = `data:image/${ext};base64,${b64}`;
-        } catch {
-          safeLogo = shopLogoUrl;
-        }
-      }
-    }
+    const safeLogo = await getSafeLogoUri();
 
     const html = generateInvoiceHtml({
       bill,
@@ -236,12 +240,13 @@ export const InvoiceScreen = ({
   const handlePrint = async () => {
     try {
       setIsPrinting(true);
+      const safeLogo = await getSafeLogoUri();
       const html = generateInvoiceHtml({
         bill,
         shopName,
         shopAddress,
         shopGstin,
-        shopLogoUrl,
+        shopLogoUrl: safeLogo,
       });
       await Print.printAsync({ html });
     } catch (err: any) {

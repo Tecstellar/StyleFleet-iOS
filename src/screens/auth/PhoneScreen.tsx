@@ -14,7 +14,7 @@ import { Button } from '../../components/common/Button';
 import { radii, spacing } from '../../theme/spacing';
 
 interface PhoneScreenProps {
-  onSendOtp: (phone: string) => void;
+  onSendOtp: (phone: string) => Promise<void> | void;
   onRegisterShop: () => void;
 }
 
@@ -23,8 +23,10 @@ export const PhoneScreen = ({ onSendOtp, onRegisterShop }: PhoneScreenProps) => 
   const [phone, setPhone] = useState('');
   const [agreeToTerms, setAgreeToTerms] = useState(false);
   const [error, setError] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
-  const handleSend = () => {
+  const handleSend = async () => {
+    if (isSending) return;
     const clean = phone.replace(/\D/g, '');
     if (clean.length < 10) {
       setError('Please enter a 10-digit mobile number');
@@ -35,7 +37,12 @@ export const PhoneScreen = ({ onSendOtp, onRegisterShop }: PhoneScreenProps) => 
       return;
     }
     setError('');
-    onSendOtp(phone);
+    setIsSending(true);
+    try {
+      await onSendOtp(phone);
+    } catch {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -115,10 +122,10 @@ export const PhoneScreen = ({ onSendOtp, onRegisterShop }: PhoneScreenProps) => 
           </View>
 
           <Button
-            label="Send OTP"
+            label={isSending ? 'Sending OTP...' : 'Send OTP'}
             block
             onPress={handleSend}
-            disabled={!agreeToTerms || phone.replace(/\D/g, '').length < 10}
+            disabled={isSending || !agreeToTerms || phone.replace(/\D/g, '').length < 10}
             style={{ marginTop: 6 }}
           />
 
