@@ -440,20 +440,6 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
             <Text style={{ fontSize: 13, marginRight: 6 }}>✨</Text>
             <Text style={styles.compactUploadButtonText}>{t('importFromMenu', 'Upload Menu')}</Text>
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.compactSettingsBtn,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.divider,
-              },
-            ]}
-            onPress={() => setShowApiKeyModal(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={{ fontSize: 13 }}>⚙️</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Progress Bar when importing */}
