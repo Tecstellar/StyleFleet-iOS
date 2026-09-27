@@ -14,13 +14,18 @@ export interface AuthUser {
   shopId?: string;
 }
 
-export class AuthRepository {
-  private lastSentPhone: string | null = null;
-  private lastSentTime: number = 0;
-  private lastSessionId: string | null = null;
+const DEMO_OTP_MODE = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
 
+// Guard against dual sends or rapid double-taps
+let lastOtpSentPhone = '';
+let lastOtpSentTime = 0;
+const inFlightOtpDispatches = new Map<string, Promise<{ success: boolean; sessionId?: string; error?: string }>>();
+let lastSessionId = '';
+
+export class AuthRepository {
   /**
    * Request 6-digit OTP for a 10-digit mobile number via 2Factor Login_Verification_OTP
+   * Strictly enforces single SMS dispatch to eliminate duplicate messages.
    */
   async sendOtp(phone: string): Promise<{ success: boolean; sessionId?: string; error?: string }> {
     const clean = phone.replace(/\D/g, '').slice(-10);
@@ -28,38 +33,58 @@ export class AuthRepository {
       return { success: false, error: 'Please enter a valid 10-digit mobile number' };
     }
 
-    // Cooldown check (15 seconds) to prevent duplicate triggers from double taps or quick resends
-    if (this.lastSentPhone === clean && Date.now() - this.lastSentTime < 15000 && this.lastSessionId) {
-      return { success: true, sessionId: this.lastSessionId };
+    const existingDispatch = inFlightOtpDispatches.get(clean);
+    if (existingDispatch) {
+      return await existingDispatch;
     }
+
+    const now = Date.now();
+    if (lastOtpSentPhone === clean && now - lastOtpSentTime < 15000 && lastSessionId) {
+      return { success: true, sessionId: lastSessionId };
+    }
+
+    const dispatchPromise = (async () => {
+      try {
+        const url = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/${clean}/AUTOGEN/${TWO_FACTOR_TEMPLATE}`;
+        const res = await fetch(url);
+        const json = await res.json();
+
+        if (json && json.Status === 'Success') {
+          lastOtpSentPhone = clean;
+          lastOtpSentTime = Date.now();
+          lastSessionId = json.Details;
+          return { success: true, sessionId: json.Details };
+        }
+
+        if (json && json.Details) {
+          console.warn('2Factor error response:', json.Details);
+        }
+
+        const dispatchError = json?.Details || 'OTP dispatch failed. Please try again.';
+        return { success: false, error: dispatchError };
+      } catch (e: any) {
+        console.warn('2Factor direct fetch error:', e.message);
+        return { success: false, error: e.message || 'OTP dispatch failed. Please try again.' };
+      }
+    })();
+
+    inFlightOtpDispatches.set(clean, dispatchPromise);
 
     try {
-      // Direct single 2Factor API with Login_Verification_OTP template (generates 6-digit OTP)
-      const url = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/${clean}/AUTOGEN/${TWO_FACTOR_TEMPLATE}`;
-      const res = await fetch(url);
-      const json = await res.json();
-
-      if (json && json.Status === 'Success') {
-        this.lastSentPhone = clean;
-        this.lastSentTime = Date.now();
-        this.lastSessionId = json.Details;
-        return { success: true, sessionId: json.Details };
-      } else if (json && json.Details) {
-        console.warn('2Factor error response:', json.Details);
+      const result = await dispatchPromise;
+      if (!result.success && DEMO_OTP_MODE) {
+        const mockSess = `mock_sess_${Date.now()}`;
+        lastOtpSentPhone = clean;
+        lastOtpSentTime = Date.now();
+        lastSessionId = mockSess;
+        return { success: true, sessionId: mockSess };
       }
-    } catch (e: any) {
-      console.warn('2Factor direct fetch error:', e.message);
+      return result;
+    } finally {
+      if (inFlightOtpDispatches.get(clean) === dispatchPromise) {
+        inFlightOtpDispatches.delete(clean);
+      }
     }
-
-    // Fallback: generate development session
-    const mockSession = `mock_sess_${Date.now()}`;
-    this.lastSentPhone = clean;
-    this.lastSentTime = Date.now();
-    this.lastSessionId = mockSession;
-    return {
-      success: true,
-      sessionId: mockSession,
-    };
   }
 
   /**
@@ -76,8 +101,26 @@ export class AuthRepository {
     }
 
     try {
-      // 1. Direct 2Factor SMS verify endpoint
+      // 1. Try Supabase Edge Function verification
       if (sessionId && !sessionId.startsWith('mock_')) {
+        try {
+          const { data, error } = await supabase.functions.invoke('otp-service', {
+            body: { action: 'verify', phone: clean, otp, sessionId },
+          });
+
+          if (!error && data && data.success) {
+            const authUser: AuthUser = {
+              id: data.auth?.userId || `user_${clean}`,
+              phone: clean,
+            };
+            await this.saveSession(authUser);
+            return { success: true, user: authUser };
+          }
+        } catch {
+          // Fall through to direct verification
+        }
+
+        // 2. Direct 2Factor SMS verify endpoint
         try {
           const verifyUrl = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/VERIFY/${sessionId}/${otp}`;
           const res = await fetch(verifyUrl);
@@ -94,8 +137,8 @@ export class AuthRepository {
         }
       }
 
-      // 2. Development / Demo OTP bypass (123456 or mock session)
-      if (otp === '123456' || sessionId?.startsWith('mock_')) {
+      // 3. Development / Demo OTP bypass (123456 or mock session)
+      if (otp === '123456' || (sessionId?.startsWith('mock_') && DEMO_OTP_MODE)) {
         const authUser = await this.establishSupabaseSession(clean);
         return { success: true, user: authUser };
       }

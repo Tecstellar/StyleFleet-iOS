@@ -9,6 +9,8 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
@@ -298,43 +300,58 @@ export const StaffScreen = ({
 
       {/* Add Stylist Modal */}
       <Modal visible={showAddModal} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addStylist')}</Text>
-              <TouchableOpacity onPress={() => setShowAddModal(false)}>
-                <Text style={{ color: colors.textDim, fontSize: 16 }}>{t('cancel')}</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={[
-                styles.modalInput,
-                { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 16 },
-              ]}
-              placeholder={t('fullName')}
-              placeholderTextColor="rgba(255,255,255,0.3)"
-              value={stylistName}
-              onChangeText={setStylistName}
-              autoFocus
-            />
-
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
             <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleSaveStylist}
-              disabled={isSaving}
-              style={[styles.modalAddBtn, { backgroundColor: colors.accent }]}
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setShowAddModal(false)}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
             >
-              {isSaving ? (
-                <ActivityIndicator color="#000" size="small" />
-              ) : (
-                <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>
-                  {t('save')}
-                </Text>
-              )}
-            </TouchableOpacity>
+              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addStylist')}</Text>
+                  <TouchableOpacity onPress={() => setShowAddModal(false)}>
+                    <Text style={{ color: colors.textDim, fontSize: 16 }}>{t('cancel')}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  style={[
+                    styles.modalInput,
+                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 16 },
+                  ]}
+                  placeholder={t('fullName')}
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={stylistName}
+                  onChangeText={setStylistName}
+                  autoFocus
+                />
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={handleSaveStylist}
+                  disabled={isSaving}
+                  style={[styles.modalAddBtn, { backgroundColor: colors.accent }]}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator color="#000" size="small" />
+                  ) : (
+                    <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>
+                      {t('save')}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );

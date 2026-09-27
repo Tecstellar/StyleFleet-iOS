@@ -16,6 +16,7 @@ import { Customer, Bill } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { radii } from '../../theme/spacing';
 import { CustomerManagerModal } from '../../components/customers/CustomerManagerModal';
+import { SettleDueModal } from '../../components/customers/SettleDueModal';
 
 interface CustomerDetailScreenProps {
   customer: Customer;
@@ -26,7 +27,7 @@ interface CustomerDetailScreenProps {
   onStartBill: (customer: Customer) => void;
   onBookSlot: (customer: Customer) => void;
   onWhatsApp: (customer: Customer) => void;
-  onSettleDue?: (customerId: string, method?: 'cash' | 'upi') => void;
+  onSettleDue?: (customerId: string, method?: 'cash' | 'upi', amountMinor?: number) => void;
   onUpdateCustomer?: (customer: Customer) => void;
 }
 
@@ -45,6 +46,7 @@ export const CustomerDetailScreen = ({
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isSettleModalOpen, setIsSettleModalOpen] = useState(false);
 
   const avgBill =
     customer.visits_count > 0
@@ -160,17 +162,7 @@ export const CustomerDetailScreen = ({
           {customer.outstanding_due_minor > 0 && (
             <TouchableOpacity
               activeOpacity={0.8}
-              onPress={() => {
-                Alert.alert(
-                  'Settle Outstanding Due',
-                  `Settle ${inrFromMinor(customer.outstanding_due_minor)} for ${customer.name}?`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'Cash', onPress: () => onSettleDue?.(customer.id, 'cash') },
-                    { text: 'UPI', onPress: () => onSettleDue?.(customer.id, 'upi') },
-                  ]
-                );
-              }}
+              onPress={() => setIsSettleModalOpen(true)}
               style={[
                 styles.tag,
                 { backgroundColor: colors.accent900, borderColor: colors.accent, paddingHorizontal: 10 },
@@ -274,6 +266,16 @@ export const CustomerDetailScreen = ({
         onBatchSuccess={() => {}}
         onEditSuccess={(updated) => {
           onUpdateCustomer?.(updated);
+        }}
+      />
+
+      <SettleDueModal
+        visible={isSettleModalOpen}
+        customer={customer}
+        onClose={() => setIsSettleModalOpen(false)}
+        onConfirm={async (customerId, method, amountMinor) => {
+          await onSettleDue?.(customerId, method, amountMinor);
+          setIsSettleModalOpen(false);
         }}
       />
     </SafeAreaView>

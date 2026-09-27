@@ -72,29 +72,16 @@ export const AccountsScreen = ({
   const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   const [showFaqModal, setShowFaqModal] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
-
-  // Permanent Delete Modal
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [selectedDeleteReason, setSelectedDeleteReason] = useState<string>('Closing or Pausing Salon Business');
+  const [selectedDeleteReason, setSelectedDeleteReason] = useState('Closing or Pausing Salon Business');
   const [deleteCustomNote, setDeleteCustomNote] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const handleSignOut = () => {
-    Alert.alert(
-      t('signOut', 'Sign Out'),
-      'Are you sure you want to sign out of your salon account?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: t('signOut', 'Sign Out'),
-          style: 'destructive',
-          onPress: () => {
-            if (onSignOut) onSignOut();
-          },
-        },
-      ]
-    );
-  };
+  // Support ticket form
+  const [supportMessage, setSupportMessage] = useState('');
+  const [supportContact, setSupportContact] = useState(userPhone);
+  const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
+  const [supportAnswers, setSupportAnswers] = useState<SupportMessageAnswer[]>([]);
 
   const handlePermanentDelete = async () => {
     setIsDeleting(true);
@@ -129,12 +116,6 @@ export const AccountsScreen = ({
     }
   };
 
-  // Support ticket form
-  const [supportMessage, setSupportMessage] = useState('');
-  const [supportContact, setSupportContact] = useState(userPhone);
-  const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
-  const [supportAnswers, setSupportAnswers] = useState<SupportMessageAnswer[]>([]);
-
   useEffect(() => {
     if (showSupportModal && shopId) {
       supportRepository.getSupportMessageAnswers(shopId).then((ans) => {
@@ -145,53 +126,58 @@ export const AccountsScreen = ({
 
   const pnl = financialService.getPnLMetrics(period, bills, expenses);
 
+  const deleteWarningText = t(
+    'deleteAccountWarning',
+    'Deleting your account will permanently wipe all bills, clients, staff records, service catalogs, and history for "{shopName}" from the Supabase database.'
+  ).replace('{shopName}', shopName);
+
   const tools = [
     {
       id: 'expenses' as const,
       label: t('expenses'),
-      sub: 'Log & categorise',
+      sub: t('expensesSub', 'Log & categorise'),
       icon: <WalletIcon size={19} color={colors.accent} />,
       badge: '',
     },
     {
       id: 'appointments' as const,
       label: t('appointments'),
-      sub: 'Day agenda',
+      sub: t('appointmentsSub', 'Day agenda'),
       icon: <CalendarIcon size={19} color={colors.accent} />,
       badge: '',
     },
     {
       id: 'reminders' as const,
       label: t('reminders'),
-      sub: 'Auto & manual',
+      sub: t('remindersSub', 'Auto & manual'),
       icon: <BellIcon size={19} color={colors.accent} />,
       badge: openRemindersCount > 0 ? String(openRemindersCount) : '',
     },
     {
       id: 'bulk' as const,
-      label: 'WhatsApp',
-      sub: 'Offers & nudges',
+      label: t('whatsApp', 'WhatsApp'),
+      sub: t('whatsAppSub', 'Offers & nudges'),
       icon: <ChatIcon size={19} color={colors.accent} />,
       badge: '',
     },
     {
       id: 'staff' as const,
       label: t('team'),
-      sub: 'Who delivers what',
+      sub: t('staffSub', 'Who delivers what'),
       icon: <UsersIcon size={19} color={colors.accent} />,
       badge: '',
     },
     {
       id: 'pricing' as const,
       label: t('priceAndOffers'),
-      sub: 'Add, delete, discount',
+      sub: t('pricingSub', 'Add, delete, discount'),
       icon: <TagIcon size={19} color={colors.accent} />,
       badge: '',
     },
     {
       id: 'profile' as const,
       label: t('shopProfile'),
-      sub: 'Logo, theme, GST',
+      sub: t('profileSub', 'Logo, theme, GST'),
       icon: <StoreIcon size={19} color={colors.accent} />,
       badge: '',
     },
@@ -290,7 +276,7 @@ export const AccountsScreen = ({
           </View>
           <View style={styles.pnlMarginBadge}>
             <Text style={[styles.pnlMarginText, { color: colors.accent200 }]}>
-              {pnl.margin_pct}% margin
+              {pnl.margin_pct}% {t('marginLabel', 'margin')}
             </Text>
           </View>
         </View>
@@ -322,7 +308,7 @@ export const AccountsScreen = ({
         {pnl.categories.length > 0 ? (
           <View style={[styles.card, { backgroundColor: colors.surface }]}>
             <Text style={[styles.cardHeader, { color: colors.textDim }]}>
-              WHERE THE MONEY WENT
+              {t('whereMoneyWent', 'WHERE THE MONEY WENT')}
             </Text>
             {pnl.categories.map((c, i) => (
               <View key={i} style={styles.expenseCatItem}>
@@ -375,7 +361,9 @@ export const AccountsScreen = ({
         ) : null}
 
         {/* Manage Tools Header */}
-        <Text style={[styles.manageTitle, { color: colors.textDim }]}>OPERATIONS & TOOLS</Text>
+        <Text style={[styles.manageTitle, { color: colors.textDim }]}>
+          {t('operationsAndTools', 'OPERATIONS & TOOLS')}
+        </Text>
 
         {/* 2-Column Tools Grid */}
         <View style={styles.toolsGrid}>
@@ -446,7 +434,7 @@ export const AccountsScreen = ({
             <View style={{ flex: 1, paddingRight: 8 }}>
               <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>{t('privacyPolicy')}</Text>
               <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                Customer data privacy and security terms
+                {t('privacyPolicySub', 'Customer data privacy and security terms')}
               </Text>
             </View>
             <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
@@ -463,7 +451,7 @@ export const AccountsScreen = ({
                 {t('faq')}
               </Text>
               <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                Billing, backups, GST and staff queries
+                {t('faqSub', 'Billing, backups, GST and staff queries')}
               </Text>
             </View>
             <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
@@ -480,7 +468,7 @@ export const AccountsScreen = ({
                 {t('helpDesk')}
               </Text>
               <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                Submit an inquiry or view answers from support
+                {t('helpDeskSub', 'Submit an inquiry or view answers from support')}
               </Text>
             </View>
             <View style={[styles.supportBadge, { backgroundColor: colors.accent800 }]}>
@@ -488,35 +476,50 @@ export const AccountsScreen = ({
             </View>
           </TouchableOpacity>
 
-          {/* Sign Out */}
-          <TouchableOpacity
-            style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
-            onPress={handleSignOut}
-            activeOpacity={0.7}
-          >
-            <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
-                🚪 {t('signOut', 'Sign Out')}
-              </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                Sign out of your salon on this device
-              </Text>
-            </View>
-            <Text style={{ color: colors.textDim, fontSize: 18 }}>›</Text>
-          </TouchableOpacity>
+          {/* Sign Out (Moved here from Shop Profile as instructed) */}
+          {onSignOut && (
+            <TouchableOpacity
+              style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
+              onPress={() => {
+                Alert.alert(
+                  t('signOut', 'Sign out'),
+                  'Are you sure you want to sign out from your salon account?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                      text: t('signOut', 'Sign out'),
+                      style: 'destructive',
+                      onPress: onSignOut,
+                    },
+                  ]
+                );
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1, paddingRight: 8 }}>
+                <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
+                  🚪 {t('signOut', 'Sign out')}
+                </Text>
+                <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+                  {t('signOutSub', 'Exit session on this device')}
+                </Text>
+              </View>
+              <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
+            </TouchableOpacity>
+          )}
 
           {/* Permanently Delete Account */}
           <TouchableOpacity
-            style={[styles.settingsRow, { borderBottomWidth: 0 }]}
+            style={[styles.settingsRow, { borderBottomWidth: 0, backgroundColor: 'rgba(255, 59, 48, 0.05)' }]}
             onPress={() => setShowDeleteModal(true)}
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
               <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.error }]}>
-                🗑️ {t('deleteAccount', 'Permanently Delete Account')}
+                🗑 {t('deleteAccount', 'Permanently Delete Account')}
               </Text>
               <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                Wipe all shop and customer records permanently
+                {t('deleteAccountSub', 'Wipe salon database records and close account')}
               </Text>
             </View>
             <Text style={{ color: colors.error, fontSize: 18 }}>›</Text>
@@ -608,105 +611,117 @@ export const AccountsScreen = ({
       <Modal visible={showSupportModal} animationType="slide" transparent>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
+          style={{ flex: 1 }}
         >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Help Desk Support</Text>
-              <TouchableOpacity onPress={() => setShowSupportModal(false)}>
-                <Text style={{ color: colors.accent, fontSize: 16 }}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.modalSub, { color: colors.textDim }]}>
-              Enter your query or technical issue below. It will be recorded into our Supabase support desk.
-            </Text>
-
-            {supportAnswers.length > 0 && (
-              <View style={{ marginVertical: 10 }}>
-                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
-                  💬 Replies from Support ({supportAnswers.length})
-                </Text>
-                {supportAnswers.slice(0, 3).map((a) => (
-                  <View
-                    key={a.id}
-                    style={{
-                      backgroundColor: colors.bg,
-                      borderRadius: radii.sm,
-                      borderWidth: 1,
-                      borderColor: a.is_read ? colors.divider : colors.accent,
-                      padding: 10,
-                      marginBottom: 6,
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
-                      <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '700' }}>
-                        {a.admin_name || 'StyleFleet Support'}
-                      </Text>
-                      {!a.is_read && (
-                        <TouchableOpacity
-                          onPress={async () => {
-                            await supportRepository.markAnswerAsRead(shopId, a.id);
-                            setSupportAnswers((prev) =>
-                              prev.map((item) => (item.id === a.id ? { ...item, is_read: true } : item))
-                            );
-                          }}
-                        >
-                          <Text style={{ color: colors.accent, fontSize: 10, fontWeight: '600' }}>
-                            Mark Read ✓
-                          </Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                    <Text style={{ color: colors.text, fontSize: 12 }}>{a.answer}</Text>
-                  </View>
-                ))}
-              </View>
-            )}
-
-            <TextInput
-              style={[
-                styles.ticketInput,
-                {
-                  backgroundColor: colors.bg,
-                  borderColor: colors.divider,
-                  color: colors.text,
-                },
-              ]}
-              multiline
-              numberOfLines={4}
-              placeholder="Describe your issue or question in detail..."
-              placeholderTextColor={colors.textDim}
-              value={supportMessage}
-              onChangeText={setSupportMessage}
-            />
-
-            <TextInput
-              style={[
-                styles.contactInput,
-                {
-                  backgroundColor: colors.bg,
-                  borderColor: colors.divider,
-                  color: colors.text,
-                },
-              ]}
-              placeholder="Your contact phone or email (optional)"
-              placeholderTextColor={colors.textDim}
-              value={supportContact}
-              onChangeText={setSupportContact}
-            />
-
+          <View style={styles.modalOverlay}>
             <TouchableOpacity
-              style={[styles.primaryModalButton, { backgroundColor: colors.accent }]}
-              onPress={handleSendSupportTicket}
-              disabled={isSubmittingTicket}
-              activeOpacity={0.8}
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setShowSupportModal(false)}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
             >
-              {isSubmittingTicket ? (
-                <ActivityIndicator color="#000" size="small" />
-              ) : (
-                <Text style={styles.primaryModalButtonText}>Submit Support Ticket</Text>
-              )}
-            </TouchableOpacity>
+              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>Help Desk Support</Text>
+                  <TouchableOpacity onPress={() => setShowSupportModal(false)}>
+                    <Text style={{ color: colors.accent, fontSize: 16 }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={[styles.modalSub, { color: colors.textDim }]}>
+                  Enter your query or technical issue below. It will be recorded into our Supabase support desk.
+                </Text>
+
+                {supportAnswers.length > 0 && (
+                  <View style={{ marginVertical: 10 }}>
+                    <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
+                      💬 Replies from Support ({supportAnswers.length})
+                    </Text>
+                    {supportAnswers.slice(0, 3).map((a) => (
+                      <View
+                        key={a.id}
+                        style={{
+                          backgroundColor: colors.bg,
+                          borderRadius: radii.sm,
+                          borderWidth: 1,
+                          borderColor: a.is_read ? colors.divider : colors.accent,
+                          padding: 10,
+                          marginBottom: 6,
+                        }}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 }}>
+                          <Text style={{ color: colors.accent, fontSize: 11, fontWeight: '700' }}>
+                            {a.admin_name || 'StyleFleet Support'}
+                          </Text>
+                          {!a.is_read && (
+                            <TouchableOpacity
+                              onPress={async () => {
+                                await supportRepository.markAnswerAsRead(shopId, a.id);
+                                setSupportAnswers((prev) =>
+                                  prev.map((item) => (item.id === a.id ? { ...item, is_read: true } : item))
+                                );
+                              }}
+                            >
+                              <Text style={{ color: colors.accent, fontSize: 10, fontWeight: '600' }}>
+                                Mark Read ✓
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        <Text style={{ color: colors.text, fontSize: 12 }}>{a.answer}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                <TextInput
+                  style={[
+                    styles.ticketInput,
+                    {
+                      backgroundColor: colors.bg,
+                      borderColor: colors.divider,
+                      color: colors.text,
+                    },
+                  ]}
+                  multiline
+                  numberOfLines={4}
+                  placeholder="Describe your issue or question in detail..."
+                  placeholderTextColor={colors.textDim}
+                  value={supportMessage}
+                  onChangeText={setSupportMessage}
+                />
+
+                <TextInput
+                  style={[
+                    styles.contactInput,
+                    {
+                      backgroundColor: colors.bg,
+                      borderColor: colors.divider,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder="Your contact phone or email (optional)"
+                  placeholderTextColor={colors.textDim}
+                  value={supportContact}
+                  onChangeText={setSupportContact}
+                />
+
+                <TouchableOpacity
+                  style={[styles.primaryModalButton, { backgroundColor: colors.accent }]}
+                  onPress={handleSendSupportTicket}
+                  disabled={isSubmittingTicket}
+                  activeOpacity={0.8}
+                >
+                  {isSubmittingTicket ? (
+                    <ActivityIndicator color="#000" size="small" />
+                  ) : (
+                    <Text style={styles.primaryModalButtonText}>Submit Support Ticket</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -765,98 +780,123 @@ export const AccountsScreen = ({
       </Modal>
 
       {/* ---------------------------------------------------- */}
-      {/* 6. PERMANENT DELETE ACCOUNT MODAL                   */}
+      {/* 6. PERMANENT DELETE MODAL                            */}
       {/* ---------------------------------------------------- */}
       <Modal visible={showDeleteModal} animationType="slide" transparent>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
+          style={{ flex: 1 }}
         >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.error, maxHeight: '90%' }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.error }]}>Delete Salon Account</Text>
-              <TouchableOpacity onPress={() => setShowDeleteModal(false)}>
-                <Text style={{ color: colors.textDim, fontSize: 16 }}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView keyboardShouldPersistTaps="handled">
-              <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 12, marginTop: 8 }}>
-                ⚠️ <Text style={{ fontWeight: '700', color: colors.error }}>Irreversible Action:</Text> Deleting your account will permanently wipe all bills, clients, staff records, service catalogs, and history for "{shopName}" from the database.
-              </Text>
-
-              <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textDim, marginBottom: 8 }}>
-                Reason for leaving:
-              </Text>
-
-              {[
-                'Closing or Pausing Salon Business',
-                'Switching to Another Software',
-                'Encountered Bugs / Technical Difficulties',
-                'Temporary Test Account',
-                'Other Reason',
-              ].map((reason) => {
-                const isSelected = selectedDeleteReason === reason;
-                return (
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => {
+                if (!isDeleting) {
+                  setShowDeleteModal(false);
+                }
+              }}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.error, maxHeight: '90%' }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.error }]}>{t('deleteAccountTitle', 'Delete Salon Account')}</Text>
                   <TouchableOpacity
-                    key={reason}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedDeleteReason(reason)}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      gap: 10,
-                      paddingVertical: 8,
-                      paddingHorizontal: 10,
-                      borderRadius: radii.sm,
-                      borderWidth: 1,
-                      borderColor: isSelected ? colors.error : colors.divider,
-                      backgroundColor: isSelected ? 'rgba(255, 59, 48, 0.1)' : 'transparent',
-                      marginBottom: 6,
+                    onPress={() => {
+                      if (!isDeleting) {
+                        setShowDeleteModal(false);
+                      }
                     }}
                   >
-                    <View
-                      style={{
-                        width: 14,
-                        height: 14,
-                        borderRadius: 7,
-                        borderWidth: 1.5,
-                        borderColor: isSelected ? colors.error : colors.textSubtle,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                      }}
-                    >
-                      {isSelected && (
-                        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.error }} />
-                      )}
-                    </View>
-                    <Text style={{ fontSize: 12.5, color: colors.text }}>{reason}</Text>
+                    <Text style={{ color: colors.textDim, fontSize: 16 }}>{t('cancel', 'Cancel')}</Text>
                   </TouchableOpacity>
-                );
-              })}
+                </View>
 
-              <TextInput
-                style={[
-                  styles.contactInput,
-                  { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 8, height: 42, marginBottom: 14 },
-                ]}
-                placeholder="Additional feedback (optional)"
-                placeholderTextColor={colors.textDim}
-                value={deleteCustomNote}
-                onChangeText={setDeleteCustomNote}
-              />
+                <ScrollView keyboardShouldPersistTaps="handled">
+                  <Text style={{ color: colors.textMuted, fontSize: 12.5, lineHeight: 18, marginBottom: 12 }}>
+                    ⚠️ <Text style={{ fontWeight: '700', color: colors.error }}>{t('irreversibleAction', 'Irreversible Action')}:</Text>{' '}
+                    {deleteWarningText}
+                  </Text>
 
-              <TouchableOpacity
-                onPress={handlePermanentDelete}
-                disabled={isDeleting}
-                style={[styles.primaryModalButton, { backgroundColor: colors.error }]}
-              >
-                {isDeleting ? (
-                  <ActivityIndicator color="#FFF" size="small" />
-                ) : (
-                  <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>Confirm Permanent Deletion</Text>
-                )}
-              </TouchableOpacity>
+                  <Text style={{ fontSize: 11.5, fontWeight: '600', color: colors.textDim, marginBottom: 8 }}>
+                    Reason for leaving:
+                  </Text>
+
+                  {[
+                    'Closing or Pausing Salon Business',
+                    'Switching to Another Software',
+                    'Encountered Bugs / Technical Difficulties',
+                    'Temporary Test Account',
+                    'Other Reason',
+                  ].map((reason) => {
+                    const isSelected = selectedDeleteReason === reason;
+                    return (
+                      <TouchableOpacity
+                        key={reason}
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedDeleteReason(reason)}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 10,
+                          paddingVertical: 8,
+                          paddingHorizontal: 10,
+                          borderRadius: radii.sm,
+                          borderWidth: 1,
+                          borderColor: isSelected ? colors.error : colors.divider,
+                          backgroundColor: isSelected ? 'rgba(255, 59, 48, 0.1)' : 'transparent',
+                          marginBottom: 6,
+                        }}
+                      >
+                        <View
+                          style={{
+                            width: 14,
+                            height: 14,
+                            borderRadius: 7,
+                            borderWidth: 1.5,
+                            borderColor: isSelected ? colors.error : colors.textDim,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {isSelected && (
+                            <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.error }} />
+                          )}
+                        </View>
+                        <Text style={{ fontSize: 12.5, color: colors.text }}>{reason}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+
+                  <TextInput
+                    style={[
+                      styles.ticketInput,
+                      { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 8, height: 42, paddingVertical: 8 },
+                    ]}
+                    placeholder="Additional feedback (optional)"
+                    placeholderTextColor={colors.textDim}
+                    value={deleteCustomNote}
+                    onChangeText={setDeleteCustomNote}
+                  />
+
+                  <TouchableOpacity
+                    onPress={handlePermanentDelete}
+                    disabled={isDeleting}
+                    style={[styles.primaryModalButton, { backgroundColor: colors.error, marginTop: 14 }]}
+                  >
+                    {isDeleting ? (
+                      <ActivityIndicator color="#FFF" size="small" />
+                    ) : (
+                      <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 14 }}>
+                        {t('deleteAccountConfirm', 'Confirm Permanent Deletion')}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>

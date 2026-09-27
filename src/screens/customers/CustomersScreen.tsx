@@ -4,7 +4,8 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  ScrollView,
+  FlatList,
+  Platform,
   StyleSheet,
   Alert,
 } from 'react-native';
@@ -16,6 +17,7 @@ import { StarIcon } from '../../components/common/SvgIcons';
 import { Customer } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { CustomerManagerModal } from '../../components/customers/CustomerManagerModal';
+import { SettleDueModal } from '../../components/customers/SettleDueModal';
 
 interface CustomersScreenProps {
   customers: Customer[];
@@ -25,7 +27,7 @@ interface CustomersScreenProps {
   onAddCustomer?: (customer: Customer) => void;
   onBatchAddCustomers?: (customers: Customer[]) => void;
   onUpdateCustomer?: (customer: Customer) => void;
-  onSettleDue?: (customerId: string, method?: 'cash' | 'upi') => void;
+  onSettleDue?: (customerId: string, method?: 'cash' | 'upi', amountMinor?: number) => void;
 }
 
 export const CustomersScreen = ({
@@ -45,7 +47,7 @@ export const CustomersScreen = ({
   const [activeFilter, setActiveFilter] = useState<'All' | 'MVP ★' | 'Dues'>('All');
   const [modalVisible, setModalVisible] = useState(false);
   const [customerToEdit, setCustomerToEdit] = useState<Customer | null>(null);
-  const [displayLimit, setDisplayLimit] = useState(200);
+  const [customerToSettle, setCustomerToSettle] = useState<Customer | null>(null);
 
   // Frequent customers sorted by visits count
   const sortedCustomers = React.useMemo(() => {
@@ -54,11 +56,14 @@ export const CustomersScreen = ({
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
     const sourceList = q ? customers : sortedCustomers;
 
     return sourceList.filter((c) => {
-      if (q && !c.name.toLowerCase().includes(q) && !c.phone.includes(q)) {
-        return false;
+      if (q) {
+        const matchesName = c.name.toLowerCase().includes(q);
+        const matchesPhone = c.phone.includes(q) || (qDigits.length >= 3 && c.phone.includes(qDigits));
+        if (!matchesName && !matchesPhone) return false;
       }
       if (activeFilter === 'MVP ★') return c.is_starred;
       if (activeFilter === 'Dues') return c.outstanding_due_minor > 0;
@@ -67,8 +72,7 @@ export const CustomersScreen = ({
   }, [customers, sortedCustomers, query, activeFilter]);
 
   const isSearching = query.trim().length > 0;
-  const displayedCustomers = isSearching ? filtered : filtered.slice(0, displayLimit);
-  const hasMore = !isSearching && filtered.length > displayLimit;
+  const displayedCustomers = isSearching ? filtered : filtered.slice(0, 200);
 
   const handleOpenAddModal = () => {
     setCustomerToEdit(null);
@@ -78,6 +82,121 @@ export const CustomersScreen = ({
   const handleOpenEditModal = (c: Customer) => {
     setCustomerToEdit(c);
     setModalVisible(true);
+  };
+
+  const renderCustomerItem = ({ item: c }: { item: Customer }) => {
+    const hasDue = c.outstanding_due_minor > 0;
+    const dueLabel = hasDue
+      ? `${t('due', 'due')} ${inrFromMinor(c.outstanding_due_minor)}`
+      : t('settled', 'settled');
+
+    return (
+      <View
+        style={[
+          styles.customerRow,
+          { borderBottomColor: colors.divider },
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.customerRowMain}
+          activeOpacity={0.7}
+          onPress={() => onSelectCustomer(c)}
+        >
+          <View
+            style={[
+              styles.avatar,
+              {
+                backgroundColor: c.is_starred
+                  ? colors.accent800
+                  : colors.neutral800,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.avatarText,
+                {
+                  color: c.is_starred
+                    ? colors.accent100
+                    : colors.neutral200,
+                },
+              ]}
+            >
+              {getInitials(c.name)}
+            </Text>
+          </View>
+
+          <View style={styles.customerDetails}>
+            <View style={styles.nameRow}>
+              <Text style={[styles.customerName, { color: colors.text }]}>
+                {c.name}
+              </Text>
+              {c.is_starred ? (
+                <Text style={[styles.badge, { color: colors.accent }]}>
+                  ★ MVP
+                </Text>
+              ) : null}
+            </View>
+            <Text
+              numberOfLines={1}
+              style={[styles.metaText, { color: colors.textDim }]}
+            >
+              {`${c.visits_count} visits · last ${c.last_visit_date || 'recently'} · ${
+                c.preferred_stylist_name || 'Stylist'
+              }`}
+            </Text>
+          </View>
+
+          <View style={styles.spendColumn}>
+            <Text style={[styles.spendText, { color: colors.text }]}>
+              {inrFromMinor(c.lifetime_spend_minor)}
+            </Text>
+            {hasDue ? (
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setCustomerToSettle(c)}
+                style={[
+                  styles.settlePill,
+                  { backgroundColor: colors.accent900, borderColor: colors.accent },
+                ]}
+              >
+                <Text style={[styles.settlePillText, { color: colors.accent }]}>
+                  Settle {inrFromMinor(c.outstanding_due_minor)}{c.due_start_date ? ` (${c.due_start_date})` : ''}
+                </Text>
+              </TouchableOpacity>
+            ) : (
+              <Text
+                style={[styles.dueText, { color: colors.textSubtle }]}
+              >
+                {dueLabel}
+              </Text>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.actionsColumn}>
+          <TouchableOpacity
+            onPress={() => onToggleStar(c.id)}
+            style={styles.starButton}
+            activeOpacity={0.7}
+          >
+            <StarIcon
+              size={18}
+              color={c.is_starred ? colors.accent : 'rgba(255,255,255,0.3)'}
+              fill={c.is_starred ? colors.accent : 'none'}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => handleOpenEditModal(c)}
+            style={styles.editButton}
+            activeOpacity={0.7}
+          >
+            <Text style={{ fontSize: 13, color: colors.textDim }}>✏️</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
   };
 
   return (
@@ -109,10 +228,7 @@ export const CustomersScreen = ({
           placeholder={t('searchNameOrNumber', 'Search name or number')}
           placeholderTextColor="rgba(255, 255, 255, 0.3)"
           value={query}
-          onChangeText={(txt) => {
-            setQuery(txt);
-            setDisplayLimit(200);
-          }}
+          onChangeText={setQuery}
         />
 
         <View style={styles.filtersRow}>
@@ -127,36 +243,23 @@ export const CustomersScreen = ({
                   : t('dues', 'Dues')
               }
               active={activeFilter === filter}
-              onPress={() => {
-                setActiveFilter(filter);
-                setDisplayLimit(200);
-              }}
+              onPress={() => setActiveFilter(filter)}
             />
           ))}
         </View>
-
-        {!isSearching && customers.length > 200 && (
-          <View style={styles.topNoticeRow}>
-            <Text style={[styles.topNoticeText, { color: colors.accent }]}>
-              ⚡ Showing {displayedCustomers.length} of {customers.length} clients · Use search to find any client
-            </Text>
-          </View>
-        )}
-        {isSearching && (
-          <View style={styles.topNoticeRow}>
-            <Text style={[styles.topNoticeText, { color: colors.accent }]}>
-              🔍 Found {displayedCustomers.length} client{displayedCustomers.length === 1 ? '' : 's'} matching "{query.trim()}"
-            </Text>
-          </View>
-        )}
       </View>
 
-      <ScrollView
-        contentContainerStyle={[styles.listContent, { paddingBottom: 140 }]}
+      <FlatList
+        data={displayedCustomers}
+        keyExtractor={(item) => item.id}
+        renderItem={renderCustomerItem}
+        contentContainerStyle={styles.listContent}
         keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
-        {displayedCustomers.length === 0 ? (
+        initialNumToRender={20}
+        maxToRenderPerBatch={25}
+        windowSize={7}
+        removeClippedSubviews={Platform.OS === 'android'}
+        ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={[styles.emptyTitle, { color: colors.text }]}>
               {query ? t('noCustomersFound', 'No customers matching search') : t('noCustomersOnFile', 'No customers on file')}
@@ -167,161 +270,33 @@ export const CustomersScreen = ({
                 : t('tapAddHint', "Tap '+ Add' in the top right to register your salon clients.")}
             </Text>
           </View>
-        ) : (
-          displayedCustomers.map((c) => {
-            const hasDue = c.outstanding_due_minor > 0;
-            const dueLabel = hasDue
-              ? `${t('due', 'due')} ${inrFromMinor(c.outstanding_due_minor)}`
-              : t('settled', 'settled');
-
-            return (
-              <View
-                key={c.id}
-                style={[
-                  styles.customerRow,
-                  { borderBottomColor: colors.divider },
-                ]}
-              >
-              <TouchableOpacity
-                style={styles.customerRowMain}
-                activeOpacity={0.7}
-                onPress={() => onSelectCustomer(c)}
-              >
-                <View
-                  style={[
-                    styles.avatar,
-                    {
-                      backgroundColor: c.is_starred
-                        ? colors.accent800
-                        : colors.neutral800,
-                    },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.avatarText,
-                      {
-                        color: c.is_starred
-                          ? colors.accent100
-                          : colors.neutral200,
-                      },
-                    ]}
-                  >
-                    {getInitials(c.name)}
-                  </Text>
-                </View>
-
-                <View style={styles.customerDetails}>
-                  <View style={styles.nameRow}>
-                    <Text style={[styles.customerName, { color: colors.text }]}>
-                      {c.name}
-                    </Text>
-                    {c.is_starred ? (
-                      <Text style={[styles.badge, { color: colors.accent }]}>
-                        ★ MVP
-                      </Text>
-                    ) : null}
-                  </View>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.metaText, { color: colors.textDim }]}
-                  >
-                    {`${c.visits_count} visits · last ${c.last_visit_date || 'recently'} · ${
-                      c.preferred_stylist_name || 'Stylist'
-                    }`}
-                  </Text>
-                </View>
-
-                <View style={styles.spendColumn}>
-                  <Text style={[styles.spendText, { color: colors.text }]}>
-                    {inrFromMinor(c.lifetime_spend_minor)}
-                  </Text>
-                  {hasDue ? (
-                    <TouchableOpacity
-                      activeOpacity={0.8}
-                      onPress={() => {
-                        Alert.alert(
-                          'Settle Outstanding Due',
-                          `Settle ${inrFromMinor(c.outstanding_due_minor)} for ${c.name}?`,
-                          [
-                            { text: 'Cancel', style: 'cancel' },
-                            { text: 'Cash', onPress: () => onSettleDue?.(c.id, 'cash') },
-                            { text: 'UPI', onPress: () => onSettleDue?.(c.id, 'upi') },
-                          ]
-                        );
-                      }}
-                      style={[
-                        styles.settlePill,
-                        { backgroundColor: colors.accent900, borderColor: colors.accent },
-                      ]}
-                    >
-                      <Text style={[styles.settlePillText, { color: colors.accent }]}>
-                        Settle {inrFromMinor(c.outstanding_due_minor)}{c.due_start_date ? ` (${c.due_start_date})` : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <Text
-                      style={[styles.dueText, { color: colors.textSubtle }]}
-                    >
-                      {dueLabel}
-                    </Text>
-                  )}
-                </View>
-              </TouchableOpacity>
-
-              <View style={styles.actionsColumn}>
-                <TouchableOpacity
-                  onPress={() => onToggleStar(c.id)}
-                  style={styles.starButton}
-                  activeOpacity={0.7}
-                >
-                  <StarIcon
-                    size={18}
-                    color={c.is_starred ? colors.accent : 'rgba(255,255,255,0.3)'}
-                    fill={c.is_starred ? colors.accent : 'none'}
-                  />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => handleOpenEditModal(c)}
-                  style={styles.editButton}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ fontSize: 13, color: colors.textDim }}>✏️</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          );
-        }))}
-
-        {hasMore && (
-          <TouchableOpacity
-            style={[
-              styles.loadMoreBtn,
-              { borderColor: colors.accent, backgroundColor: colors.surface },
-            ]}
-            onPress={() => setDisplayLimit((prev) => prev + 100)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.loadMoreText, { color: colors.accent }]}>
-              + Load More Clients ({filtered.length - displayLimit} remaining)
-            </Text>
-          </TouchableOpacity>
-        )}
-
-        <Text style={[styles.bottomHint, { color: colors.textSubtle }]}>
-          {t('starredHint', 'Starred customers are your MVPs — they feed the WhatsApp segment of the same name.')}
-        </Text>
-      </ScrollView>
+        }
+        ListFooterComponent={
+          <Text style={[styles.bottomHint, { color: colors.textSubtle }]}>
+            {t('starredHint', 'Starred customers are your MVPs — they feed the WhatsApp segment of the same name.')}
+          </Text>
+        }
+      />
 
       <CustomerManagerModal
         visible={modalVisible}
         shopId={shopId || ''}
         customerToEdit={customerToEdit}
+        existingCustomers={customers}
         onClose={() => setModalVisible(false)}
         onAddSuccess={(newCust) => onAddCustomer?.(newCust)}
         onBatchSuccess={(newCusts) => onBatchAddCustomers?.(newCusts)}
         onEditSuccess={(updated) => onUpdateCustomer?.(updated)}
+      />
+
+      <SettleDueModal
+        visible={!!customerToSettle}
+        customer={customerToSettle}
+        onClose={() => setCustomerToSettle(null)}
+        onConfirm={async (customerId, method, amountMinor) => {
+          await onSettleDue?.(customerId, method, amountMinor);
+          setCustomerToSettle(null);
+        }}
       />
     </SafeAreaView>
   );
@@ -369,34 +344,9 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 10,
   },
-  topNoticeRow: {
-    marginTop: 8,
-    paddingVertical: 5,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    backgroundColor: 'rgba(217, 164, 65, 0.1)',
-    alignSelf: 'flex-start',
-  },
-  topNoticeText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
   listContent: {
     paddingHorizontal: 16,
-    paddingBottom: 30,
-  },
-  loadMoreBtn: {
-    marginTop: 14,
-    marginBottom: 8,
-    paddingVertical: 12,
-    borderRadius: 10,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadMoreText: {
-    fontSize: 13.5,
-    fontWeight: '600',
+    paddingBottom: 100,
   },
   customerRow: {
     flexDirection: 'row',

@@ -7,6 +7,7 @@ interface InvoiceHtmlParams {
   shopAddress?: string;
   shopGstin?: string;
   shopLogoUrl?: string | null;
+  customerPhone?: string | null;
 }
 
 export const generateInvoiceHtml = ({
@@ -15,7 +16,34 @@ export const generateInvoiceHtml = ({
   shopAddress,
   shopGstin,
   shopLogoUrl,
+  customerPhone,
 }: InvoiceHtmlParams): string => {
+  const isPartiallyPaid = bill.status === 'partially_paid';
+  const isPending = bill.status === 'pending';
+
+  let paidMinor = bill.paid_amount_minor;
+  let dueMinor = bill.due_amount_minor;
+
+  if (paidMinor === undefined || dueMinor === undefined) {
+    if (bill.notes && bill.notes.includes('due:')) {
+      const dueMatch = bill.notes.match(/due:(\d+)/);
+      const paidMatch = bill.notes.match(/paid:(\d+)/);
+      if (dueMatch) dueMinor = parseInt(dueMatch[1], 10);
+      if (paidMatch) paidMinor = parseInt(paidMatch[1], 10);
+    }
+  }
+
+  if (isPending) {
+    paidMinor = 0;
+    dueMinor = dueMinor ?? bill.total_minor;
+  } else if (isPartiallyPaid) {
+    dueMinor = dueMinor ?? 0;
+    paidMinor = paidMinor ?? Math.max(0, bill.total_minor - dueMinor);
+  } else {
+    paidMinor = paidMinor ?? bill.total_minor;
+    dueMinor = 0;
+  }
+
   const itemsRows = bill.items
     .map(
       (it) => `
@@ -60,33 +88,34 @@ export const generateInvoiceHtml = ({
     .shop-meta {
       font-size: 13px;
       color: #64748b;
-      line-height: 1.4;
-      margin: 0;
+      margin: 0 0 4px 0;
     }
     .logo-img {
-      width: 64px;
-      height: 64px;
-      border-radius: 8px;
+      width: 72px;
+      height: 72px;
+      border-radius: 12px;
       object-fit: cover;
+      border: 1px solid #e2e8f0;
     }
     .logo-box {
-      width: 56px;
-      height: 56px;
+      width: 64px;
+      height: 64px;
+      border-radius: 12px;
       background: #0f172a;
-      color: #d9a441;
+      color: #f8fafc;
+      font-weight: 800;
+      font-size: 20px;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: bold;
-      font-size: 18px;
-      border-radius: 8px;
+      letter-spacing: 1px;
     }
     .invoice-details {
       display: flex;
       justify-content: space-between;
       background: #f8fafc;
       padding: 16px 20px;
-      border-radius: 8px;
+      border-radius: 10px;
       margin-bottom: 28px;
     }
     .detail-group {
@@ -121,7 +150,7 @@ export const generateInvoiceHtml = ({
       border-bottom: 2px solid #e2e8f0;
     }
     .totals {
-      width: 260px;
+      width: 280px;
       margin-left: auto;
       margin-bottom: 30px;
     }
@@ -149,6 +178,28 @@ export const generateInvoiceHtml = ({
       font-size: 12px;
       font-weight: 700;
       margin-top: 6px;
+    }
+    .partial-badge {
+      display: inline-block;
+      background: #fef3c7;
+      color: #b45309;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-top: 6px;
+      border: 1px solid #fde68a;
+    }
+    .pending-badge {
+      display: inline-block;
+      background: #fee2e2;
+      color: #991b1b;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      margin-top: 6px;
+      border: 1px solid #fecaca;
     }
     .footer {
       text-align: center;
@@ -187,7 +238,7 @@ export const generateInvoiceHtml = ({
     </div>
     <div class="detail-group">
       <span class="detail-label">Customer</span>
-      <span class="detail-value">${bill.customer_name}</span>
+      <span class="detail-value">${bill.customer_name}${customerPhone ? ` · ${customerPhone}` : ''}</span>
     </div>
     <div class="detail-group">
       <span class="detail-label">Stylist</span>
@@ -232,17 +283,31 @@ export const generateInvoiceHtml = ({
         : ''
     }
     <div class="total-row grand">
-      <span>Total Paid</span>
+      <span>Total Amount</span>
       <span>${inrFromMinor(bill.total_minor)}</span>
     </div>
-    <div style="text-align: right;">
-      <span class="paid-badge">PAID · ${bill.payment_method.toUpperCase()}</span>
+    <div class="total-row" style="color: ${paidMinor > 0 ? '#166534' : '#64748b'}; font-weight: 600;">
+      <span>Amount Paid${paidMinor > 0 ? ` (${bill.payment_method})` : ''}</span>
+      <span>${inrFromMinor(paidMinor)}</span>
+    </div>
+    <div class="total-row" style="color: ${dueMinor > 0 ? '#dc2626' : '#64748b'}; font-weight: ${dueMinor > 0 ? '700' : '500'}; ${dueMinor > 0 ? 'border-top: 1px dashed #fca5a5; margin-top: 6px; padding-top: 6px;' : ''}">
+      <span>Amount Due</span>
+      <span>${inrFromMinor(dueMinor)}</span>
+    </div>
+    <div style="text-align: right; margin-top: 8px;">
+      ${
+        isPartiallyPaid
+          ? `<span class="partial-badge">PARTIALLY PAID · DUE ${inrFromMinor(dueMinor)}</span>`
+          : isPending
+          ? `<span class="pending-badge">PENDING / UNPAID</span>`
+          : `<span class="paid-badge">PAID · ${bill.payment_method.toUpperCase()}</span>`
+      }
     </div>
   </div>
 
   <div class="footer">
     <p>Thank you for choosing ${shopName}!</p>
-    <p style="font-size: 11px; margin-top: 4px;">Powered by Salon OS</p>
+    <p style="font-size: 11px; margin-top: 4px;">Powered by StyleFleet</p>
   </div>
 </body>
 </html>

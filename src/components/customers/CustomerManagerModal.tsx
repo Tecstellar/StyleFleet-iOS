@@ -89,6 +89,7 @@ interface CustomerManagerModalProps {
   visible: boolean;
   shopId: string;
   customerToEdit?: Customer | null;
+  existingCustomers?: Customer[];
   onClose: () => void;
   onAddSuccess: (customer: Customer) => void;
   onBatchSuccess: (customers: Customer[]) => void;
@@ -99,6 +100,7 @@ export const CustomerManagerModal = ({
   visible,
   shopId,
   customerToEdit,
+  existingCustomers = [],
   onClose,
   onAddSuccess,
   onBatchSuccess,
@@ -415,6 +417,17 @@ export const CustomerManagerModal = ({
           Alert.alert('Updated', 'Customer details saved successfully!');
         }
       } else {
+        // Check duplicate mobile
+        const existingCust = existingCustomers?.find((c) => c.phone === cleanPhone);
+        if (existingCust) {
+          Alert.alert(
+            'Customer Already Exists',
+            `A customer with mobile +91 ${cleanPhone} already exists: ${existingCust.name}`
+          );
+          setIsSubmitting(false);
+          return;
+        }
+
         // Add new customer
         const dueAmt = parseFloat(initialDue) || 0;
         const dueMinor = Math.round(dueAmt * 100);

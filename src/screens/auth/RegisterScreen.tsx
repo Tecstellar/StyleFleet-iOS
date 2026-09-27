@@ -10,10 +10,10 @@ import {
   Image,
   ActivityIndicator,
   Alert,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
 import { useTheme } from '../../theme/ThemeContext';
 import { Button } from '../../components/common/Button';
@@ -65,23 +65,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const selectedAsset = result.assets[0];
-        let permanentUri = selectedAsset.uri;
-
-        if (FileSystem.documentDirectory) {
-          const extension = selectedAsset.uri.split('.').pop() || 'jpg';
-          const destUri = `${FileSystem.documentDirectory}salon_logo_${Date.now()}.${extension}`;
-          try {
-            await FileSystem.copyAsync({
-              from: selectedAsset.uri,
-              to: destUri,
-            });
-            permanentUri = destUri;
-          } catch (copyErr) {
-            console.warn('Registration logo copy fallback to raw URI:', copyErr);
-          }
-        }
-
-        setLogoUri(permanentUri);
+        setLogoUri(selectedAsset.uri);
         setIsExtractingColor(true);
 
         // Palette tone selection based on brand character
@@ -148,8 +132,13 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
   };
 
   const handleSubmit = () => {
-    if (!shop.trim() || !owner.trim() || !addr.trim() || !city.trim() || !pin.trim()) {
+    const cleanPin = pin.replace(/\D/g, '');
+    if (!shop.trim() || !owner.trim() || !addr.trim() || !city.trim() || !cleanPin) {
       setError('Please fill in all required fields');
+      return;
+    }
+    if (cleanPin.length !== 6 && cleanPin.length !== 10) {
+      setError('PIN code must be a valid 6 or 10-digit number');
       return;
     }
     setError('');
@@ -158,11 +147,43 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
       ownerName: owner.trim(),
       address: addr.trim(),
       city: city.trim(),
-      pinCode: pin.trim(),
+      pinCode: cleanPin,
       gstin: gst.trim() || undefined,
       accentColor: applyLogoColor ? extractedColor : '#D9A441',
       logoPath: logoUri || undefined,
     });
+  };
+
+  const scrollViewRef = React.useRef<ScrollView>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  React.useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        setKeyboardHeight(e.endCoordinates.height);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleInputFocus = (offset?: number) => {
+    setTimeout(() => {
+      if (typeof offset === 'number') {
+        scrollViewRef.current?.scrollTo({ y: offset, animated: true });
+      } else {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }
+    }, 120);
   };
 
   return (
@@ -171,7 +192,16 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={{ flex: 1 }}
       >
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView
+          ref={scrollViewRef}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: Math.max(36, keyboardHeight + 40) },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          automaticallyAdjustKeyboardInsets={true}
+          showsVerticalScrollIndicator={false}
+        >
           <Button variant="icon" onPress={onBack}>
             <BackIcon size={18} color={colors.text} />
           </Button>
@@ -292,6 +322,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
             multiline
             numberOfLines={3}
             placeholder="Shop / Unit number, Street, Landmark"
+            onFocus={() => handleInputFocus(180)}
           />
 
           <View style={styles.cityPinRow}>
@@ -301,15 +332,22 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
                 value={city}
                 onChangeText={setCity}
                 placeholder="Bengaluru"
+                onFocus={() => handleInputFocus(240)}
               />
             </View>
             <View style={{ width: 112 }}>
               <Input
                 label="PIN code"
                 value={pin}
-                onChangeText={setPin}
+                onChangeText={(val) => {
+                  const cleaned = val.replace(/\D/g, '').slice(0, 10);
+                  setPin(cleaned);
+                  if (error) setError('');
+                }}
                 keyboardType="numeric"
+                maxLength={10}
                 placeholder="560001"
+                onFocus={() => handleInputFocus()}
               />
             </View>
           </View>
@@ -319,6 +357,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
             value={gst}
             onChangeText={setGst}
             placeholder="29ABCDE1234F1Z5"
+            onFocus={() => handleInputFocus()}
           />
 
           {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}

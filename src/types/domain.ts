@@ -131,6 +131,15 @@ export interface BillItem {
   staff_id: string | null;
 }
 
+export interface BillPayment {
+  id?: string;
+  amount_minor: number;
+  method: string;
+  paid_at: string;
+  status?: string;
+  reference?: string;
+}
+
 export interface Bill {
   id: string;
   shop_id: string;
@@ -144,11 +153,14 @@ export interface Bill {
   discount_minor: number;
   tax_minor: number;
   total_minor: number;
+  paid_amount_minor?: number;
+  due_amount_minor?: number;
   notes: string | null;
   issued_at: string;
   created_at?: string;
   payment_method: string;
   items: BillItem[];
+  payments?: BillPayment[];
 }
 
 export interface Expense {

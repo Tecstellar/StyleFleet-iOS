@@ -88,7 +88,25 @@ export const HomeScreen = ({
 
               {/* Store Name & Dynamic Time-Based Greeting */}
               <View style={styles.storeTextCol}>
-                <Text numberOfLines={1} style={styles.storeTitle}>
+                <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.75}
+                  ellipsizeMode="tail"
+                  style={[
+                    styles.storeTitle,
+                    {
+                      fontSize:
+                        (shopName || 'StyleFleet').length <= 14
+                          ? 21
+                          : (shopName || 'StyleFleet').length <= 22
+                          ? 17
+                          : (shopName || 'StyleFleet').length <= 30
+                          ? 14.5
+                          : 13,
+                    },
+                  ]}
+                >
                   {shopName || 'StyleFleet'}
                 </Text>
                 <Text numberOfLines={1} style={[styles.greetingSub, { color: colors.accent }]}>
@@ -125,21 +143,21 @@ export const HomeScreen = ({
           {/* ======================================================== */}
           <View style={styles.centerContent}>
             <Text style={[styles.taglineSmall, { color: colors.accent }]}>
-              LOOK GOOD  •  FEEL GOOD
+              {t('lookGoodFeelGood', 'LOOK GOOD  •  FEEL GOOD')}
             </Text>
 
             <View style={styles.headlineBlock}>
-              <Text style={styles.heroLine1}>Because</Text>
+              <Text style={styles.heroLine1}>{t('because', 'Because')}</Text>
               <Text style={[styles.heroLine2Cursive, { color: colors.accent }]}>
-                You Deserve
+                {t('youDeserve', 'You Deserve')}
               </Text>
-              <Text style={styles.heroLine3}>the Best</Text>
+              <Text style={styles.heroLine3}>{t('theBest', 'the Best')}</Text>
             </View>
 
             <View style={[styles.goldDivider, { backgroundColor: colors.accent }]} />
 
             <Text style={styles.heroDescription}>
-              Premium salon services{'\n'}for your natural beauty{'\n'}and confidence.
+              {t('heroDescription', 'Premium salon services\nfor your natural beauty\nand confidence.')}
             </Text>
           </View>
 
@@ -240,6 +258,7 @@ const styles = StyleSheet.create({
   storeTextCol: {
     marginLeft: 12,
     flex: 1,
+    minWidth: 0,
   },
   storeTitle: {
     color: '#FFFFFF',
@@ -258,6 +277,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flexShrink: 0,
   },
   circleActionBtn: {
     width: 44,

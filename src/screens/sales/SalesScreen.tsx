@@ -32,7 +32,23 @@ export const SalesScreen = ({
   const { t } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
 
-  const metrics = financialService.getSalesMetrics(period, bills);
+  // Deduplicate bills strictly to prevent duplicate rows in Recent Bills
+  const recentBills = React.useMemo(() => {
+    const seen = new Set<string>();
+    const result: Bill[] = [];
+    for (const b of bills) {
+      if (!b) continue;
+      const key = b.id || b.invoice_number;
+      if (key && seen.has(key)) continue;
+      if (b.invoice_number && seen.has(b.invoice_number)) continue;
+      if (key) seen.add(key);
+      if (b.invoice_number) seen.add(b.invoice_number);
+      result.push(b);
+    }
+    return result;
+  }, [bills]);
+
+  const metrics = financialService.getSalesMetrics(period, recentBills);
   const deltaPct =
     metrics.prev_minor > 0
       ? Math.round((Math.abs(metrics.total_minor - metrics.prev_minor) / metrics.prev_minor) * 100)
@@ -217,7 +233,7 @@ export const SalesScreen = ({
         </View>
 
         <View style={styles.billsList}>
-          {bills.length === 0 ? (
+          {recentBills.length === 0 ? (
             <View style={styles.emptyBillsBox}>
               <Text style={[styles.emptyBillsTitle, { color: colors.text }]}>
                 {t('noBillsYet', 'No bills recorded yet')}
@@ -227,41 +243,86 @@ export const SalesScreen = ({
               </Text>
             </View>
           ) : (
-            bills.map((b) => (
-              <TouchableOpacity
-                key={b.id}
-                activeOpacity={0.7}
-                onPress={() => onOpenInvoice(b)}
-                style={[
-                  styles.billRow,
-                  { borderBottomColor: colors.divider },
-                ]}
-              >
-                <Text style={[styles.billTime, { color: colors.textDim }]}>
-                  {b.issued_at}
-                </Text>
-                <View style={styles.billMain}>
-                  <Text style={[styles.billCust, { color: colors.text }]}>
-                    {b.customer_name}
+            recentBills.map((b) => {
+              const isPartiallyPaid = b.status === 'partially_paid';
+              const isPending = b.status === 'pending';
+              const dueMinor = b.due_amount_minor ?? (isPending ? b.total_minor : 0);
+              const paidMinor = b.paid_amount_minor ?? (isPending ? 0 : Math.max(0, b.total_minor - dueMinor));
+              const isDueBill = b.notes?.includes('due') || b.invoice_number?.startsWith('DUE');
+              const whatText =
+                b.items && b.items.length > 0
+                  ? b.items.map((it) => it.service_name_snapshot).join(', ')
+                  : isDueBill
+                  ? 'Opening Due / Settlement'
+                  : 'Salon Service';
+
+              return (
+                <TouchableOpacity
+                  key={b.id || b.invoice_number}
+                  activeOpacity={0.7}
+                  onPress={() => onOpenInvoice(b)}
+                  style={[
+                    styles.billRow,
+                    { borderBottomColor: colors.divider },
+                  ]}
+                >
+                  <Text style={[styles.billTime, { color: colors.textDim }]}>
+                    {b.issued_at}
                   </Text>
-                  <Text
-                    numberOfLines={1}
-                    style={[styles.billWhat, { color: colors.textDim }]}
-                  >
-                    {b.items.map((it) => it.service_name_snapshot).join(', ')} ·{' '}
-                    {b.staff_name}
-                  </Text>
-                </View>
-                <View style={styles.billRight}>
-                  <Text style={[styles.billAmt, { color: colors.text }]}>
-                    {inrFromMinor(b.total_minor)}
-                  </Text>
-                  <Text style={[styles.billMode, { color: colors.textDim }]}>
-                    {b.payment_method}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            ))
+                  <View style={styles.billMain}>
+                    <Text style={[styles.billCust, { color: colors.text, fontWeight: '600' }]}>
+                      {b.customer_name}
+                    </Text>
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.billWhat, { color: colors.textDim }]}
+                    >
+                      {whatText} · {b.staff_name || 'Staff'}
+                    </Text>
+                  </View>
+                  <View style={styles.billRight}>
+                    <Text style={[styles.billAmt, { color: colors.text, fontWeight: '700' }]}>
+                      {inrFromMinor(b.total_minor)}
+                    </Text>
+                    {isPartiallyPaid ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Text style={{ fontSize: 10, color: '#16a34a', fontWeight: '600' }}>
+                          Paid {inrFromMinor(paidMinor)}
+                        </Text>
+                        <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: '600' }}>
+                          · Due {inrFromMinor(dueMinor)}
+                        </Text>
+                        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 9, color: '#b45309', fontWeight: '700' }}>PARTIAL</Text>
+                        </View>
+                      </View>
+                    ) : isPending ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Text style={{ fontSize: 10, color: '#ef4444', fontWeight: '600' }}>
+                          Due {inrFromMinor(dueMinor)}
+                        </Text>
+                        <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 9, color: '#991b1b', fontWeight: '700' }}>DUE</Text>
+                        </View>
+                      </View>
+                    ) : isDueBill ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <Text style={{ fontSize: 10, color: '#16a34a', fontWeight: '600' }}>
+                          Due Settled
+                        </Text>
+                        <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 9, color: '#166534', fontWeight: '700' }}>PAID</Text>
+                        </View>
+                      </View>
+                    ) : (
+                      <Text style={[styles.billMode, { color: colors.textDim }]}>
+                        {b.payment_method}
+                      </Text>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              );
+            })
           )}
         </View>
       </ScrollView>

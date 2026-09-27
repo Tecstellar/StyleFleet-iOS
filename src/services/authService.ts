@@ -29,7 +29,10 @@ export class AuthService {
     if (!data.ownerName.trim()) throw new Error('Owner name is required');
     if (!data.address.trim()) throw new Error('Address is required');
     if (!data.city.trim()) throw new Error('City is required');
-    if (!data.pinCode.trim() || data.pinCode.length < 6) throw new Error('Valid 6-digit PIN code is required');
+    const cleanPin = data.pinCode.replace(/\D/g, '');
+    if (!cleanPin || (cleanPin.length !== 6 && cleanPin.length !== 10)) {
+      throw new Error('Valid 6-digit PIN code is required');
+    }
 
     const shop = await shopRepository.createShop(userId, data);
     await authRepository.setCurrentShopId(shop.id);

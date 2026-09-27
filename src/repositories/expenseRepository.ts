@@ -115,7 +115,7 @@ export class ExpenseRepository {
    */
   getPnLMetrics(
     period: Period,
-    billsList: { total_minor: number; status?: string; created_at?: string }[] = [],
+    billsList: { total_minor: number; status?: string; created_at?: string; paid_amount_minor?: number; due_amount_minor?: number }[] = [],
     expensesList: Expense[] = []
   ): PnLMetrics {
     const now = new Date();
@@ -150,14 +150,45 @@ export class ExpenseRepository {
       return t >= startLimit && t <= todayEnd;
     });
 
-    const income = filteredBills.reduce((acc, b) => acc + (b.total_minor || 0), 0);
+    const getBillCollected = (b: { total_minor: number; status?: string; paid_amount_minor?: number }): number => {
+      if (b.status === 'pending') return 0;
+      if (b.status === 'partially_paid') {
+        return typeof b.paid_amount_minor === 'number' ? b.paid_amount_minor : (b.total_minor || 0);
+      }
+      return b.total_minor || 0;
+    };
+
+    const getBillDue = (b: { total_minor: number; status?: string; paid_amount_minor?: number; due_amount_minor?: number }): number => {
+      if (b.status === 'pending') return b.total_minor || 0;
+      if (b.status === 'partially_paid') {
+        if (typeof b.due_amount_minor === 'number') return b.due_amount_minor;
+        const paid = typeof b.paid_amount_minor === 'number' ? b.paid_amount_minor : 0;
+        return Math.max(0, (b.total_minor || 0) - paid);
+      }
+      return 0;
+    };
+
+    let income = 0;
+    for (const b of billsList as any[]) {
+      if (b.payments && b.payments.length > 0) {
+        for (const p of b.payments) {
+          const pt = p.paid_at ? new Date(p.paid_at).getTime() : getTime(b.created_at);
+          if (pt >= startLimit && pt <= todayEnd) {
+            income += (p.amount_minor || 0);
+          }
+        }
+      } else {
+        const t = getTime(b.created_at);
+        if (t >= startLimit && t <= todayEnd) {
+          income += getBillCollected(b);
+        }
+      }
+    }
     const expense = filteredExpenses.reduce((acc, e) => acc + (e.amount_minor || 0), 0);
     const net = income - expense;
     const margin = income > 0 ? Math.round((net / income) * 100) : 0;
 
-    const dues = filteredBills
-      .filter((b) => b.status === 'pending' || b.status === 'partially_paid')
-      .reduce((acc, b) => acc + (b.total_minor || 0), 0);
+    const dues = filteredBills.reduce((acc, b) => acc + getBillDue(b), 0);
 
     // Real Category breakdown from filtered expenses
     const catMap: Record<string, number> = {};

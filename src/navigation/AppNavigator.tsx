@@ -63,6 +63,7 @@ export const AppNavigator = () => {
   // Auth & Shop context
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [currentShop, setCurrentShop] = useState<ShopRow | null>(null);
+  const [ownerName, setOwnerName] = useState<string>('Owner');
   const [authPhone, setAuthPhone] = useState('');
   const [authSessionId, setAuthSessionId] = useState<string | undefined>();
   const [pendingRegistration, setPendingRegistration] = useState<ShopRegistrationData | null>(null);
@@ -115,6 +116,9 @@ export const AppNavigator = () => {
         if (cachedShop) {
           if (isMounted) {
             setCurrentShop(cachedShop);
+            shopRepository.resolveOwnerName(cachedShop.owner_profile_id).then((oName) => {
+              if (oName && isMounted) setOwnerName(oName);
+            });
             const user: AuthUser = cachedUser || {
               id: cachedShop.owner_profile_id || 'user_' + (cachedShop.phone || 'salon'),
               phone: cachedShop.phone || lastPhone || '',
@@ -156,6 +160,9 @@ export const AppNavigator = () => {
         if (shop) {
           if (isMounted) {
             setCurrentShop(shop);
+            shopRepository.resolveOwnerName(shop.owner_profile_id).then((oName) => {
+              if (oName && isMounted) setOwnerName(oName);
+            });
             await shopRepository.cacheShop(shop);
             await authRepository.setCurrentShopId(shop.id);
             if (!user) {
@@ -396,24 +403,6 @@ export const AppNavigator = () => {
     }
   };
 
-  const handleSignOut = async () => {
-    await authRepository.signOut();
-    await shopRepository.clearCachedShop();
-    await AsyncStorage.removeItem('@salon_os_last_phone');
-    setCurrentUser(null);
-    setCurrentShop(null);
-    setBills([]);
-    setCustomers([]);
-    setStaff([]);
-    setExpenses([]);
-    setAppointments([]);
-    setReminders([]);
-    setCategories([]);
-    setServices([]);
-    setInitialDestination('phone');
-    setScreen('phone');
-  };
-
   const handleRegisterNext = (data: ShopRegistrationData) => {
     setPendingRegistration(data);
     navigateTo('workers');
@@ -430,6 +419,10 @@ export const AppNavigator = () => {
         const userId = currentUser?.id || `user_${Date.now()}`;
         const shop = await authService.registerShop(userId, regDataWithPhone);
         setCurrentShop(shop);
+        if (pendingRegistration.ownerName) {
+          setOwnerName(pendingRegistration.ownerName);
+          await shopRepository.saveOwnerName(pendingRegistration.ownerName);
+        }
         await shopRepository.cacheShop(shop);
         await authRepository.setCurrentShopId(shop.id);
         if (phoneToUse) {
@@ -468,21 +461,36 @@ export const AppNavigator = () => {
     );
   };
 
-  const handleSettleDue = async (customerId: string, method: 'cash' | 'upi' = 'cash') => {
+  const handleSettleDue = async (
+    customerId: string,
+    method: 'cash' | 'upi' = 'cash',
+    amountMinor?: number
+  ) => {
     if (!currentShop) return;
     try {
-      await customerRepository.settleDues(currentShop.id, customerId, method);
+      const remainingCustDue = await customerRepository.settleDues(
+        currentShop.id,
+        customerId,
+        method,
+        amountMinor
+      );
       setCustomers((prev) =>
         prev.map((c) =>
-          c.id === customerId ? { ...c, outstanding_due_minor: 0 } : c
+          c.id === customerId ? { ...c, outstanding_due_minor: remainingCustDue } : c
         )
       );
       if (selectedCustomer && selectedCustomer.id === customerId) {
-        setSelectedCustomer((prev) => (prev ? { ...prev, outstanding_due_minor: 0 } : null));
+        setSelectedCustomer((prev) => (prev ? { ...prev, outstanding_due_minor: remainingCustDue } : null));
       }
       const b = await billingRepository.getBills(currentShop.id);
       setBills(b);
-      Alert.alert('Due Settled', 'Outstanding payment has been cleared successfully.');
+      const isFull = remainingCustDue === 0;
+      Alert.alert(
+        isFull ? 'Due Fully Settled' : 'Partial Due Payment Recorded',
+        isFull
+          ? 'Outstanding balance has been cleared in full.'
+          : `Payment recorded. Remaining customer due: ₹${Math.round(remainingCustDue / 100).toLocaleString('en-IN')}`
+      );
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Could not settle dues');
     }
@@ -496,6 +504,8 @@ export const AppNavigator = () => {
     items: { name: string; priceMinor: number; isColour?: boolean }[];
     paymentMethod: string;
     discountMinor: number;
+    paidAmountMinor?: number;
+    dueAmountMinor?: number;
   }) => {
     if (!currentShop) return;
     const newBill = await billingRepository.createBill(
@@ -506,10 +516,27 @@ export const AppNavigator = () => {
       billData.staffId,
       billData.items,
       billData.paymentMethod,
-      billData.discountMinor
+      billData.discountMinor,
+      billData.paidAmountMinor,
+      billData.dueAmountMinor
     );
-    setBills((prev) => [newBill, ...prev]);
+    setBills((prev) => {
+      const filtered = prev.filter(
+        (b) => b.id !== newBill.id && b.invoice_number !== newBill.invoice_number
+      );
+      return [newBill, ...filtered];
+    });
     setSelectedBill(newBill);
+
+    if (billData.dueAmountMinor && billData.dueAmountMinor > 0 && billData.customerId) {
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === billData.customerId
+            ? { ...c, outstanding_due_minor: (c.outstanding_due_minor || 0) + (billData.dueAmountMinor || 0) }
+            : c
+        )
+      );
+    }
 
     // If billing an in-chair appointment, advance it to Done
     if (pendingAppointmentToBill) {
@@ -674,6 +701,30 @@ export const AppNavigator = () => {
     }
   };
 
+  const handleSignOut = async () => {
+    try {
+      await authRepository.signOut();
+      await shopRepository.clearCachedShop();
+      await AsyncStorage.removeItem('@salon_os_last_phone');
+    } catch (e) {
+      console.warn('Sign out cleanup error:', e);
+    }
+    setCurrentUser(null);
+    setCurrentShop(null);
+    setOwnerName('Owner');
+    setBills([]);
+    setCustomers([]);
+    setStaff([]);
+    setExpenses([]);
+    setAppointments([]);
+    setReminders([]);
+    setCategories([]);
+    setServices([]);
+    setOffers([]);
+    setInitialDestination('phone');
+    setScreen('phone');
+  };
+
   const isMainTabScreen = ['home', 'customers', 'sales', 'accounts'].includes(screen);
 
   const insets = useSafeAreaInsets();
@@ -758,18 +809,30 @@ export const AppNavigator = () => {
               navigateTo('customer');
             }}
             onToggleStar={handleToggleStar}
-            onAddCustomer={(newCust) => {
+            onAddCustomer={async (newCust) => {
               setCustomers((prev) => [newCust, ...prev]);
+              if (currentShop) {
+                const refreshed = await billingRepository.getBills(currentShop.id);
+                setBills(refreshed);
+              }
             }}
-            onBatchAddCustomers={(newCusts) => {
+            onBatchAddCustomers={async (newCusts) => {
               setCustomers((prev) => [...newCusts, ...prev]);
+              if (currentShop) {
+                const refreshed = await billingRepository.getBills(currentShop.id);
+                setBills(refreshed);
+              }
             }}
-            onUpdateCustomer={(updated) => {
+            onUpdateCustomer={async (updated) => {
               setCustomers((prev) =>
                 prev.map((c) => (c.id === updated.id ? updated : c))
               );
               if (selectedCustomer?.id === updated.id) {
                 setSelectedCustomer(updated);
+              }
+              if (currentShop) {
+                const refreshed = await billingRepository.getBills(currentShop.id);
+                setBills(refreshed);
               }
             }}
             onSettleDue={handleSettleDue}
@@ -788,6 +851,10 @@ export const AppNavigator = () => {
             onToggleStar={handleToggleStar}
             onStartBill={(c) => {
               setSelectedCustomer(c);
+              setInitialBillServiceId(null);
+              setInitialBillServiceIds([]);
+              setInitialBillStaffId(null);
+              setPendingAppointmentToBill(null);
               navigateTo('bill');
             }}
             onBookSlot={(c) => {
@@ -859,7 +926,16 @@ export const AppNavigator = () => {
             shopGstin={currentShop?.gstin || undefined}
             shopLogoUrl={currentShop?.logo_path || null}
             customerPhone={
-              customers.find((c) => c.id === selectedBill.customer_id)?.phone || null
+              (selectedBill.customer_id
+                ? customers.find((c) => c.id === selectedBill.customer_id)?.phone
+                : null) ||
+              selectedCustomer?.phone ||
+              customers.find(
+                (c) =>
+                  c.name.trim().toLowerCase() ===
+                  selectedBill.customer_name.trim().toLowerCase()
+              )?.phone ||
+              null
             }
             onBack={goBack}
             onSendWhatsApp={handleSendInvoiceWhatsApp}
@@ -887,8 +963,8 @@ export const AppNavigator = () => {
             shopName={currentShop?.name || 'My Salon'}
             userPhone={currentShop?.phone || authPhone}
             onNavigate={(dest) => navigateTo(dest)}
-            onSignOut={handleSignOut}
             onAccountDeleted={handleSignOut}
+            onSignOut={handleSignOut}
           />
         )}
 
@@ -911,39 +987,71 @@ export const AppNavigator = () => {
             }}
             onAdvanceStatus={handleAdvanceStatus}
             onBillAndClose={(appt) => {
-              if (appt.customer_id) {
-                const c = customers.find((cust) => cust.id === appt.customer_id) || null;
-                setSelectedCustomer(c);
-              } else {
-                setSelectedCustomer(null);
-              }
+              const matchedCustomer =
+                (appt.customer_id ? customers.find((cust) => cust.id === appt.customer_id) : null) ||
+                (appt.customer_phone ? customers.find((cust) => cust.phone === appt.customer_phone) : null) ||
+                customers.find(
+                  (cust) => cust.name.trim().toLowerCase() === appt.customer_name.trim().toLowerCase()
+                ) ||
+                (appt.customer_phone
+                  ? ({
+                      id: appt.customer_id || '',
+                      name: appt.customer_name,
+                      phone: appt.customer_phone,
+                      visits: 1,
+                      spend: 0,
+                      dues: 0,
+                      is_starred: false,
+                      outstanding_due_minor: 0,
+                      total_spend_minor: 0,
+                      total_visits: 1,
+                    } as any)
+                  : null);
+              setSelectedCustomer(matchedCustomer);
 
-              // Pre-fill ALL services from the appointment
-              let allSelectedServiceIds: string[] = [];
+              // Resolve ALL services for this appointment
+              let matchedIds: string[] = [];
+
+              // 1. Direct service_ids array
               if (appt.service_ids && appt.service_ids.length > 0) {
-                allSelectedServiceIds = [...appt.service_ids];
-              } else if (appt.service_id) {
-                allSelectedServiceIds = [appt.service_id];
+                matchedIds = [...appt.service_ids];
               }
 
-              // Resilient match: if appointment service_name has multiple services (e.g. "Haircut + Beard Trim + Head Massage")
-              // resolve each service against the shop's services catalog
-              if (appt.service_name && services.length > 0) {
-                const subNames = appt.service_name.split(/\s*\+\s*|\s*,\s*/);
-                for (const name of subNames) {
-                  const cleaned = name.trim().toLowerCase();
-                  if (!cleaned) continue;
-                  const match = services.find(
-                    (s) => s.name.trim().toLowerCase() === cleaned
-                  );
-                  if (match && !allSelectedServiceIds.includes(match.id)) {
-                    allSelectedServiceIds.push(match.id);
+              // 2. Parsed JSON from notes
+              if (matchedIds.length === 0 && appt.notes) {
+                try {
+                  const parsed = JSON.parse(appt.notes);
+                  if (Array.isArray(parsed?.service_ids) && parsed.service_ids.length > 0) {
+                    matchedIds = [...parsed.service_ids];
+                  }
+                } catch {
+                  // regular string
+                }
+              }
+
+              // 3. Match services by name (e.g. "Haircut + Beard Trim + Facial")
+              if (appt.service_name) {
+                const parts = appt.service_name.split(/\s*[\+,]\s*/);
+                for (const part of parts) {
+                  const cleaned = part.trim().toLowerCase();
+                  if (cleaned) {
+                    const found = services.find(
+                      (s) => s.name.trim().toLowerCase() === cleaned
+                    );
+                    if (found && !matchedIds.includes(found.id)) {
+                      matchedIds.push(found.id);
+                    }
                   }
                 }
               }
 
-              setInitialBillServiceIds(allSelectedServiceIds);
-              setInitialBillServiceId(allSelectedServiceIds[0] || appt.service_id || null);
+              // 4. Fallback to single service_id if none matched
+              if (matchedIds.length === 0 && appt.service_id) {
+                matchedIds.push(appt.service_id);
+              }
+
+              setInitialBillServiceIds(matchedIds);
+              setInitialBillServiceId(matchedIds[0] || null);
               setInitialBillStaffId(appt.staff_id || null);
               setPendingAppointmentToBill(appt);
               navigateTo('bill');
@@ -956,6 +1064,7 @@ export const AppNavigator = () => {
             customers={customers}
             services={services}
             staff={staff}
+            appointments={appointments}
             initialCustomerId={selectedCustomer?.id || null}
             onBack={() => {
               setSelectedCustomer(null);
@@ -1092,7 +1201,7 @@ export const AppNavigator = () => {
           <ShopProfileScreen
             shopId={currentShop.id}
             shopName={currentShop.name}
-            ownerName="Owner"
+            ownerName={ownerName}
             phone={currentShop.phone || authPhone || '9800000000'}
             address={currentShop.address || ''}
             city={currentShop.city || ''}
@@ -1102,6 +1211,14 @@ export const AppNavigator = () => {
             currentGstRate={currentShop.gst_rate}
             teamCount={staff.length}
             onBack={goBack}
+            onUpdateShop={async (updatedShopData) => {
+              if (updatedShopData?.name) {
+                setCurrentShop((prev) => (prev ? { ...prev, name: updatedShopData.name } : null));
+              }
+              if (updatedShopData?.owner_name) {
+                setOwnerName(updatedShopData.owner_name);
+              }
+            }}
             onUpdateLogo={async (logoPath) => {
               await shopRepository.updateShop(currentShop.id, { logo_path: logoPath });
               setCurrentShop((prev) => (prev ? { ...prev, logo_path: logoPath } : null));
@@ -1110,19 +1227,7 @@ export const AppNavigator = () => {
               await shopRepository.updateShop(currentShop.id, { gst_rate: gstRate });
               setCurrentShop((prev) => (prev ? { ...prev, gst_rate: gstRate } : null));
             }}
-            onUpdateShopDetails={async (details) => {
-              const updated = await shopRepository.updateShop(currentShop.id, {
-                name: details.name,
-                address: details.address,
-                city: details.city,
-                pin_code: details.pinCode,
-              });
-              if (updated) {
-                setCurrentShop(updated);
-              }
-            }}
             onAccountDeleted={handleSignOut}
-            onSignOut={handleSignOut}
           />
         )}
       </View>

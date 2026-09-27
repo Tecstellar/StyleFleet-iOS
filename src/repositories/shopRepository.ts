@@ -6,6 +6,7 @@ export type ShopRow = Database['public']['Tables']['shops']['Row'];
 
 const STORAGE_KEY_SHOP_CACHE = '@salon_os_shop_cache';
 const STORAGE_KEY_LAST_PHONE = '@salon_os_last_phone';
+const STORAGE_KEY_OWNER_NAMES = '@salon_os_owner_names_by_profile';
 
 export interface ShopRegistrationData {
   name: string;
@@ -204,6 +205,11 @@ export class ShopRepository {
         console.warn('RPC initialize_shop_defaults notice:', rpcErr);
       }
 
+      if (data.ownerName) {
+        await this.saveOwnerName(data.ownerName);
+        (row as any).owner_name = data.ownerName;
+      }
+
       await this.cacheShop(row);
       return row;
     }
@@ -211,11 +217,19 @@ export class ShopRepository {
     throw new Error('Unexpected empty response from database when saving salon');
   }
 
-  async updateShop(shopId: string, updates: Partial<ShopRow>): Promise<ShopRow | null> {
+  async updateShop(shopId: string, updates: Partial<ShopRow> & { owner_name?: string }): Promise<ShopRow | null> {
+    const { owner_name, ...shopUpdates } = updates;
+
+    if (owner_name) {
+      const cached = await this.getCachedShop();
+      const ownerProfileId = shopUpdates.owner_profile_id ?? cached?.owner_profile_id ?? null;
+      await this.saveOwnerName(owner_name, ownerProfileId);
+    }
+
     try {
       const { data, error } = await supabase
         .from('shops')
-        .update(updates as any)
+        .update(shopUpdates as any)
         .eq('id', shopId)
         .select()
         .single();
@@ -230,9 +244,64 @@ export class ShopRepository {
 
     const cached = await this.getCachedShop();
     if (cached && cached.id === shopId) {
-      const updated = { ...cached, ...updates };
+      const updated = { ...cached, ...shopUpdates };
       await this.cacheShop(updated);
       return updated;
+    }
+    return null;
+  }
+
+  async saveOwnerName(ownerName: string, ownerProfileId?: string | null): Promise<void> {
+    const trimmed = ownerName?.trim();
+    if (!trimmed) return;
+
+    try {
+      if (ownerProfileId) {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY_OWNER_NAMES);
+        const cached: Record<string, string> = raw ? JSON.parse(raw) : {};
+        cached[ownerProfileId] = trimmed;
+        await AsyncStorage.setItem(STORAGE_KEY_OWNER_NAMES, JSON.stringify(cached));
+        return;
+      }
+
+      await AsyncStorage.setItem('@salon_os_owner_name', trimmed);
+    } catch {
+      // ignore
+    }
+  }
+
+  async getCachedOwnerName(ownerProfileId?: string | null): Promise<string | null> {
+    try {
+      if (ownerProfileId) {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY_OWNER_NAMES);
+        if (!raw) return null;
+        const cached: Record<string, string> = JSON.parse(raw);
+        return cached[ownerProfileId] || null;
+      }
+      return await AsyncStorage.getItem('@salon_os_owner_name');
+    } catch {
+      return null;
+    }
+  }
+
+  async resolveOwnerName(ownerProfileId: string | null): Promise<string | null> {
+    if (!ownerProfileId) return null;
+
+    const cached = await this.getCachedOwnerName(ownerProfileId);
+    if (cached) return cached;
+
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', ownerProfileId)
+        .single();
+      if (data?.full_name) {
+        await this.saveOwnerName(data.full_name, ownerProfileId);
+        return data.full_name;
+      }
+    } catch {
+      // ignore
     }
     return null;
   }
@@ -253,6 +322,8 @@ export class ShopRepository {
 
   async clearCachedShop(): Promise<void> {
     await AsyncStorage.removeItem(STORAGE_KEY_SHOP_CACHE);
+    await AsyncStorage.removeItem('@salon_os_owner_name');
+    await AsyncStorage.removeItem(STORAGE_KEY_OWNER_NAMES);
   }
 
   async saveLastPhone(phone: string): Promise<void> {

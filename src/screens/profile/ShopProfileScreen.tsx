@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system/legacy';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { SUPPORTED_LANGUAGES, LanguageCode } from '../../i18n/translations';
@@ -24,6 +23,8 @@ import { Button } from '../../components/common/Button';
 import { BackIcon, StoreIcon, EditIcon } from '../../components/common/SvgIcons';
 import { radii, shadows } from '../../theme/spacing';
 import { supportRepository } from '../../repositories/supportRepository';
+import { shopRepository } from '../../repositories/shopRepository';
+import { supabase } from '../../lib/supabase';
 
 interface ShopProfileScreenProps {
   shopId?: string;
@@ -40,13 +41,7 @@ interface ShopProfileScreenProps {
   onBack: () => void;
   onUpdateLogo?: (logoPath: string) => Promise<void>;
   onUpdateGstRate?: (rate: number) => Promise<void>;
-  onUpdateShopDetails?: (details: {
-    name: string;
-    ownerName: string;
-    address: string;
-    city: string;
-    pinCode: string;
-  }) => Promise<void>;
+  onUpdateShop?: (updated: any) => void;
   onAccountDeleted?: () => void;
   onSignOut?: () => void;
 }
@@ -66,7 +61,7 @@ export const ShopProfileScreen = ({
   onBack,
   onUpdateLogo,
   onUpdateGstRate,
-  onUpdateShopDetails,
+  onUpdateShop,
   onAccountDeleted,
   onSignOut,
 }: ShopProfileScreenProps) => {
@@ -76,69 +71,6 @@ export const ShopProfileScreen = ({
   const [currentLogo, setCurrentLogo] = useState<string | null>(logoUrl || null);
   const [isUpdatingLogo, setIsUpdatingLogo] = useState(false);
 
-  // Synchronize currentLogo when logoUrl prop updates from parent or database
-  useEffect(() => {
-    if (logoUrl) {
-      setCurrentLogo(logoUrl);
-    }
-  }, [logoUrl]);
-
-  // Edit Shop Profile State
-  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
-  const [editName, setEditName] = useState(shopName);
-  const [editOwnerName, setEditOwnerName] = useState(ownerName);
-  const [editAddress, setEditAddress] = useState(address);
-  const [editCity, setEditCity] = useState(city);
-  const [editPinCode, setEditPinCode] = useState(pinCode);
-  const [isSavingDetails, setIsSavingDetails] = useState(false);
-
-  useEffect(() => {
-    setEditName(shopName);
-    setEditOwnerName(ownerName);
-    setEditAddress(address);
-    setEditCity(city);
-    setEditPinCode(pinCode);
-  }, [shopName, ownerName, address, city, pinCode]);
-
-  const handleSaveShopDetails = async () => {
-    if (!editName.trim()) {
-      Alert.alert('Required', 'Please enter salon name');
-      return;
-    }
-    if (!editAddress.trim()) {
-      Alert.alert('Required', 'Please enter address');
-      return;
-    }
-    if (!editCity.trim()) {
-      Alert.alert('Required', 'Please enter city');
-      return;
-    }
-    const cleanPin = editPinCode.replace(/\D/g, '');
-    if (cleanPin.length !== 6) {
-      Alert.alert('Invalid PIN Code', 'Please enter a valid 6-digit PIN code');
-      return;
-    }
-
-    setIsSavingDetails(true);
-    try {
-      if (onUpdateShopDetails) {
-        await onUpdateShopDetails({
-          name: editName.trim(),
-          ownerName: editOwnerName.trim() || editName.trim(),
-          address: editAddress.trim(),
-          city: editCity.trim(),
-          pinCode: cleanPin,
-        });
-      }
-      setIsSavingDetails(false);
-      setShowEditProfileModal(false);
-      Alert.alert('Profile Updated', 'Salon details saved successfully.');
-    } catch (e: any) {
-      setIsSavingDetails(false);
-      Alert.alert('Notice', e.message || 'Could not update salon profile');
-    }
-  };
-
   // GST Settings
   const [isGstEnabled, setIsGstEnabled] = useState(currentGstRate > 0);
   const [gstRateInput, setGstRateInput] = useState(String(currentGstRate > 0 ? currentGstRate : 18));
@@ -146,6 +78,72 @@ export const ShopProfileScreen = ({
 
   // Language Modal
   const [showLangModal, setShowLangModal] = useState(false);
+
+  // Edit Salon Profile Modal
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editName, setEditName] = useState(shopName);
+  const [editOwner, setEditOwner] = useState(ownerName);
+  const [editAddress, setEditAddress] = useState(address);
+  const [editCity, setEditCity] = useState(city);
+  const [editPin, setEditPin] = useState(pinCode);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  useEffect(() => {
+    setEditName(shopName);
+    setEditOwner(ownerName);
+    setEditAddress(address);
+    setEditCity(city);
+    setEditPin(pinCode);
+  }, [shopName, ownerName, address, city, pinCode]);
+
+  const handleSaveProfile = async () => {
+    if (!editName.trim()) {
+      Alert.alert('Required', 'Please enter salon name');
+      return;
+    }
+    setIsSavingProfile(true);
+    try {
+      const updated = await shopRepository.updateShop(shopId, {
+        name: editName.trim(),
+        address: editAddress.trim(),
+        city: editCity.trim(),
+        pin_code: editPin.trim(),
+        owner_name: editOwner.trim() || undefined,
+      });
+
+      if (!updated) {
+        Alert.alert('Error', 'Could not update salon profile.');
+        return;
+      }
+
+      if (editOwner.trim()) {
+        const cached = await shopRepository.getShopById(shopId);
+        const ownerProfileId = cached?.owner_profile_id || null;
+        if (ownerProfileId) {
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .update({ full_name: editOwner.trim() } as any)
+            .eq('id', ownerProfileId);
+
+          if (profileError) {
+            Alert.alert('Error', profileError.message || 'Could not update owner profile');
+            return;
+          }
+        }
+        await shopRepository.saveOwnerName(editOwner.trim(), ownerProfileId);
+      }
+
+      if (onUpdateShop) {
+        onUpdateShop({ ...updated, name: editName.trim(), owner_name: editOwner.trim() });
+      }
+      setShowEditModal(false);
+      Alert.alert('Profile Saved', 'Salon profile details updated in database successfully!');
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not update profile');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   const handlePickLogo = async () => {
     try {
@@ -163,28 +161,11 @@ export const ShopProfileScreen = ({
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const pickedUri = result.assets[0].uri;
+        const newUri = result.assets[0].uri;
         setIsUpdatingLogo(true);
-
-        // Store logo permanently in app documentDirectory so it survives cache purges and reboot
-        let permanentUri = pickedUri;
-        if (FileSystem.documentDirectory) {
-          const extension = pickedUri.split('.').pop() || 'jpg';
-          const destUri = `${FileSystem.documentDirectory}salon_logo_${Date.now()}.${extension}`;
-          try {
-            await FileSystem.copyAsync({
-              from: pickedUri,
-              to: destUri,
-            });
-            permanentUri = destUri;
-          } catch (copyErr) {
-            console.warn('Permanent logo copy fallback to raw URI:', copyErr);
-          }
-        }
-
-        setCurrentLogo(permanentUri);
+        setCurrentLogo(newUri);
         if (onUpdateLogo) {
-          await onUpdateLogo(permanentUri);
+          await onUpdateLogo(newUri);
         }
         setIsUpdatingLogo(false);
         Alert.alert('Logo Updated', 'Your salon logo has been saved.');
@@ -219,8 +200,6 @@ export const ShopProfileScreen = ({
     Alert.alert('GST Updated', `GST on services set to ${isGstEnabled ? rate : 0}%.`);
   };
 
-
-
   const currentLangLabel =
     SUPPORTED_LANGUAGES.find((l) => l.code === language)?.nativeLabel || 'English';
 
@@ -233,16 +212,8 @@ export const ShopProfileScreen = ({
         <Text style={[styles.title, { color: colors.text }]}>{t('shopProfile', 'Shop Profile')}</Text>
       </View>
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
-        <ScrollView
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: 160 }]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-        >
-          {/* Shop Info Card with Change Logo */}
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Shop Info Card with Change Logo */}
         <View style={[styles.shopCard, { backgroundColor: colors.surface }]}>
           <TouchableOpacity
             activeOpacity={0.8}
@@ -268,28 +239,22 @@ export const ShopProfileScreen = ({
           </TouchableOpacity>
 
           <View style={{ flex: 1, minWidth: 0 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-              <Text style={[styles.shopName, { color: colors.text, flex: 1 }]} numberOfLines={1}>
-                {editName}
-              </Text>
-              <TouchableOpacity
-                onPress={() => setShowEditProfileModal(true)}
-                activeOpacity={0.75}
-                style={[styles.editProfileBtn, { borderColor: colors.accent, backgroundColor: colors.accent900 }]}
-              >
-                <Text style={{ color: colors.accent100, fontSize: 11.5, fontWeight: '700' }}>
-                  ✎ Edit Profile
+            <Text style={[styles.shopName, { color: colors.text }]}>{shopName}</Text>
+            <Text style={[styles.shopAddress, { color: colors.textDim }]}>
+              {address}, {city} {pinCode}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 14, marginTop: 6, flexWrap: 'wrap' }}>
+              <TouchableOpacity onPress={handlePickLogo}>
+                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
+                  📷 {t('changeLogo', 'Change Logo')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setShowEditModal(true)}>
+                <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
+                  ✏️ {t('editProfile', 'Edit Profile')}
                 </Text>
               </TouchableOpacity>
             </View>
-            <Text style={[styles.shopAddress, { color: colors.textDim }]}>
-              {editAddress}, {editCity} {editPinCode}
-            </Text>
-            <TouchableOpacity onPress={handlePickLogo} style={{ marginTop: 4 }}>
-              <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
-                📷 {t('changeLogo', 'Change Salon Logo')}
-              </Text>
-            </TouchableOpacity>
           </View>
         </View>
 
@@ -402,7 +367,7 @@ export const ShopProfileScreen = ({
         <View style={styles.detailsList}>
           <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
             <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Owner</Text>
-            <Text style={[styles.detailValue, { color: colors.text }]}>{editOwnerName}</Text>
+            <Text style={[styles.detailValue, { color: colors.text }]}>{ownerName}</Text>
           </View>
           <View style={[styles.detailRow, { backgroundColor: colors.surface }]}>
             <Text style={[styles.detailLabel, { color: colors.textMuted }]}>Login number</Text>
@@ -422,9 +387,16 @@ export const ShopProfileScreen = ({
           </View>
         </View>
 
-        <View style={{ height: 40 }} />
+        {/* EDIT PROFILE */}
+        <View style={{ marginTop: 12, marginBottom: 24 }}>
+          <Button
+            label={`✏️ ${t('editProfile', 'Edit Salon Profile')}`}
+            variant="primary"
+            block
+            onPress={() => setShowEditModal(true)}
+          />
+        </View>
       </ScrollView>
-    </KeyboardAvoidingView>
 
       {/* LANGUAGE SELECT MODAL */}
       <Modal visible={showLangModal} animationType="slide" transparent>
@@ -460,86 +432,94 @@ export const ShopProfileScreen = ({
         </View>
       </Modal>
 
-      {/* EDIT PROFILE MODAL */}
-      <Modal visible={showEditProfileModal} animationType="slide" transparent>
+      {/* EDIT SALON PROFILE MODAL (Saves directly to Supabase) */}
+      <Modal visible={showEditModal} animationType="slide" transparent>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
-          style={styles.modalOverlay}
+          style={{ flex: 1 }}
         >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider, maxHeight: '88%' }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('editProfile', 'Edit Salon Profile')}</Text>
-              <TouchableOpacity onPress={() => setShowEditProfileModal(false)}>
-                <Text style={{ color: colors.textDim, fontSize: 16 }}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setShowEditModal(false)}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Salon Profile</Text>
+                  <TouchableOpacity onPress={() => setShowEditModal(false)}>
+                    <Text style={{ color: colors.textDim, fontSize: 16 }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
 
-            <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
-              {/* Salon Name */}
-              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('salonName', 'Salon Name')}</Text>
-              <TextInput
-                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
-                placeholder="e.g. Blade & Shears"
-                placeholderTextColor={colors.textDim}
-                value={editName}
-                onChangeText={setEditName}
-              />
+                <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Salon Name *</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 10 }]}
+                  placeholder="Salon Name"
+                  placeholderTextColor={colors.textDim}
+                  value={editName}
+                  onChangeText={setEditName}
+                />
 
-              {/* Owner Name */}
-              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('ownerName', 'Owner Name')}</Text>
-              <TextInput
-                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
-                placeholder="e.g. Vikram Sharma"
-                placeholderTextColor={colors.textDim}
-                value={editOwnerName}
-                onChangeText={setEditOwnerName}
-              />
+                <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Owner Name</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 10 }]}
+                  placeholder="Owner Name"
+                  placeholderTextColor={colors.textDim}
+                  value={editOwner}
+                  onChangeText={setEditOwner}
+                />
 
-              {/* Address */}
-              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('address', 'Address')}</Text>
-              <TextInput
-                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
-                placeholder="Shop number, building, street"
-                placeholderTextColor={colors.textDim}
-                value={editAddress}
-                onChangeText={setEditAddress}
-              />
+                <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Address</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 10 }]}
+                  placeholder="Street / Area Address"
+                  placeholderTextColor={colors.textDim}
+                  value={editAddress}
+                  onChangeText={setEditAddress}
+                />
 
-              {/* City */}
-              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('city', 'City')}</Text>
-              <TextInput
-                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 12 }]}
-                placeholder="e.g. Mumbai, Bengaluru"
-                placeholderTextColor={colors.textDim}
-                value={editCity}
-                onChangeText={setEditCity}
-              />
+                <View style={{ flexDirection: 'row', gap: 10, marginBottom: 16 }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>City</Text>
+                    <TextInput
+                      style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                      placeholder="City"
+                      placeholderTextColor={colors.textDim}
+                      value={editCity}
+                      onChangeText={setEditCity}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Pincode</Text>
+                    <TextInput
+                      style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                      placeholder="6-digit PIN"
+                      placeholderTextColor={colors.textDim}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      value={editPin}
+                      onChangeText={(txt) => setEditPin(txt.replace(/\D/g, '').slice(0, 6))}
+                    />
+                  </View>
+                </View>
 
-              {/* PIN Code */}
-              <Text style={[styles.fieldLabel, { color: colors.textDim }]}>{t('pinCode', '6-Digit PIN Code')}</Text>
-              <TextInput
-                style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginBottom: 16 }]}
-                placeholder="e.g. 560001"
-                placeholderTextColor={colors.textDim}
-                keyboardType="numeric"
-                maxLength={6}
-                value={editPinCode}
-                onChangeText={setEditPinCode}
-              />
-
-              <TouchableOpacity
-                onPress={handleSaveShopDetails}
-                disabled={isSavingDetails}
-                activeOpacity={0.8}
-                style={[styles.modalAddBtn, { backgroundColor: colors.accent, marginTop: 4 }]}
-              >
-                {isSavingDetails ? (
-                  <ActivityIndicator color="#0D0E11" size="small" />
-                ) : (
-                  <Text style={{ color: '#0D0E11', fontWeight: '700', fontSize: 14 }}>Save Salon Profile</Text>
-                )}
-              </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={handleSaveProfile}
+                  disabled={isSavingProfile}
+                  style={[styles.modalAddBtn, { backgroundColor: colors.accent }]}
+                >
+                  {isSavingProfile ? (
+                    <ActivityIndicator color="#000" size="small" />
+                  ) : (
+                    <Text style={{ color: '#000', fontWeight: '700', fontSize: 14 }}>Save Changes to Database</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </ScrollView>
           </View>
         </KeyboardAvoidingView>
@@ -749,17 +729,6 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  editProfileBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  fieldLabel: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    marginBottom: 5,
   },
   langOptionRow: {
     flexDirection: 'row',

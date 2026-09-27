@@ -89,7 +89,7 @@ export const BulkWhatsAppScreen = ({
         <Text style={[styles.title, { color: colors.text }]}>Bulk WhatsApp</Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         {/* Audience Selection */}
         <Text style={[styles.sectionLabel, { color: colors.textDim }]}>WHO GETS IT</Text>
         <View style={styles.audienceList}>
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 24,
+    paddingBottom: 100,
   },
   sectionLabel: {
     fontSize: 10,

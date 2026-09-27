@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -16,7 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
-import { BackIcon } from '../../components/common/SvgIcons';
+import { BackIcon, UserPlusIcon } from '../../components/common/SvgIcons';
 import { Customer, StaffMember, Service, Bill } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { radii } from '../../theme/spacing';
@@ -40,6 +40,8 @@ interface NewBillScreenProps {
     items: { name: string; priceMinor: number; isColour?: boolean }[];
     paymentMethod: string;
     discountMinor: number;
+    paidAmountMinor?: number;
+    dueAmountMinor?: number;
   }) => void;
 }
 
@@ -69,7 +71,7 @@ export const NewBillScreen = ({
   const [newClientPhone, setNewClientPhone] = useState('');
   const [isSavingClient, setIsSavingClient] = useState(false);
 
-  // Services, Staff & Discount State (Pre-fills all services from appointment)
+  // Services, Staff & Discount State
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>(() => {
     if (initialServiceIds && initialServiceIds.length > 0) {
       return initialServiceIds;
@@ -80,7 +82,7 @@ export const NewBillScreen = ({
     return [];
   });
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (initialServiceIds && initialServiceIds.length > 0) {
       setSelectedServiceIds(initialServiceIds);
     } else if (initialServiceId) {
@@ -88,11 +90,13 @@ export const NewBillScreen = ({
     }
   }, [initialServiceIds, initialServiceId]);
 
-  React.useEffect(() => {
-    setSelectedCustomerId(initialCustomerId);
+  useEffect(() => {
+    if (initialCustomerId) {
+      setSelectedCustomerId(initialCustomerId);
+    }
   }, [initialCustomerId]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (initialStaffId) {
       const idx = staff.findIndex((s) => s.id === initialStaffId);
       if (idx >= 0) setSelectedStaffIndex(idx);
@@ -104,6 +108,8 @@ export const NewBillScreen = ({
     : -1;
   const [selectedStaffIndex, setSelectedStaffIndex] = useState<number>(initialStaffIdx);
   const [paymentMode, setPaymentMode] = useState<string>('UPI');
+  const [partialPaymentMode, setPartialPaymentMode] = useState<'UPI' | 'Cash' | 'Card'>('UPI');
+  const [partialPaidInput, setPartialPaidInput] = useState<string>('');
   const [discountInput, setDiscountInput] = useState<string>('0');
 
   // Filter matching customers based on search
@@ -190,14 +196,67 @@ export const NewBillScreen = ({
       Alert.alert('No Services', 'Please select at least one service to create a bill.');
       return;
     }
+
+    let paidMinor = totalMinor;
+    let dueMinor = 0;
+
+    if (paymentMode === 'Fully Pending') {
+      if (!selectedCustomerId) {
+        Alert.alert(
+          'Customer Details Required',
+          'Dues and pending bills can only be tracked for a registered customer. Please add or select customer name and 10-digit mobile number.',
+          [
+            { text: '+ Add Customer', onPress: () => setIsAddClientModalOpen(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        );
+        return;
+      }
+      paidMinor = 0;
+      dueMinor = totalMinor;
+    } else if (paymentMode === 'Partial Pay') {
+      if (!selectedCustomerId) {
+        Alert.alert(
+          'Customer Details Required',
+          'Partial payment dues must be assigned to a registered customer. Please add or select customer name and 10-digit mobile number.',
+          [
+            { text: '+ Add Customer', onPress: () => setIsAddClientModalOpen(true) },
+            { text: 'Cancel', style: 'cancel' },
+          ]
+        );
+        return;
+      }
+      const partialAmt = parseFloat(partialPaidInput) || 0;
+      paidMinor = Math.round(partialAmt * 100);
+      if (paidMinor <= 0) {
+        Alert.alert('Invalid Amount', 'Please enter a valid amount paid now (greater than ₹0).');
+        return;
+      }
+      if (paidMinor >= totalMinor) {
+        Alert.alert(
+          'Notice',
+          'Paid amount covers the full total. Please select UPI, Cash or Card, or lower the partial amount.'
+        );
+        return;
+      }
+      dueMinor = totalMinor - paidMinor;
+    }
+
+    const effectivePaymentMethod =
+      paymentMode === 'Partial Pay'
+        ? `Partial Pay (${partialPaymentMode})`
+        : paymentMode;
+
     onProceedToInvoice({
       customerName,
       customerId: selectedCustomerId,
       staffName: currentStaff.name,
       staffId: currentStaff.id,
       items: cartItems,
-      paymentMethod: paymentMode,
+      paymentMethod: effectivePaymentMethod,
       discountMinor,
+      paidAmountMinor: paidMinor,
+      dueAmountMinor: dueMinor,
     });
   };
 
@@ -305,10 +364,11 @@ export const NewBillScreen = ({
             </Text>
           </TouchableOpacity>
 
-          {/* + Add Client Button */}
+          {/* Add Client Button (Icon Only) */}
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setIsAddClientModalOpen(true)}
+            accessibilityLabel={t('addClient', 'Add Client')}
             style={[
               styles.addClientBtn,
               {
@@ -317,8 +377,7 @@ export const NewBillScreen = ({
               },
             ]}
           >
-            <Text style={{ fontSize: 13 }}>👤</Text>
-            <Text style={[styles.addClientBtnText, { color: colors.accent }]}>{t('addClient')}</Text>
+            <UserPlusIcon size={18} color={colors.accent} />
           </TouchableOpacity>
         </View>
 
@@ -423,105 +482,79 @@ export const NewBillScreen = ({
         )}
 
         {/* SERVICES SECTION */}
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 18 }}>
-          <Text style={[styles.sectionLabel, { color: colors.textDim }]}>
-            {t('services')} ({selectedServiceIds.length} selected)
+        {/* SERVICES SECTION */}
+        <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
+          {t('services')} ({selectedServiceIds.length} {t('selected', 'selected')})
+        </Text>
+
+        {/* CHOOSE SERVICES TRIGGER BOX */}
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => setIsServicesExpanded((prev) => !prev)}
+          style={[
+            styles.chooseServicesBox,
+            {
+              backgroundColor: colors.surface,
+              borderColor: isServicesExpanded || selectedServiceIds.length > 0 ? colors.accent : colors.divider,
+            },
+          ]}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
+            <Text style={{ fontSize: 16 }}>✨</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.chooseServicesTitle, { color: colors.text }]}>
+                {t('chooseServices', 'Choose Services')}
+              </Text>
+              <Text
+                style={[
+                  styles.chooseServicesSub,
+                  { color: selectedServiceIds.length > 0 ? colors.accent : colors.textDim },
+                ]}
+              >
+                {selectedServiceIds.length === 0
+                  ? 'Tap to select salon services'
+                  : `${selectedServiceIds.length} service${selectedServiceIds.length > 1 ? 's' : ''} selected`}
+              </Text>
+            </View>
+          </View>
+          <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '700' }}>
+            {isServicesExpanded ? '▲' : '▼'}
           </Text>
-          <TouchableOpacity
-            activeOpacity={0.75}
-            onPress={() => setIsServicesExpanded(!isServicesExpanded)}
-            style={{
-              paddingHorizontal: 10,
-              paddingVertical: 4,
-              borderRadius: radii.pill,
-              borderWidth: 1,
-              borderColor: colors.accent,
-              backgroundColor: colors.accent900,
-            }}
-          >
-            <Text style={{ color: colors.accent100, fontSize: 12, fontWeight: '600' }}>
-              {isServicesExpanded ? '▲ Collapse' : '▼ Expand all services'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        </TouchableOpacity>
 
         {/* Selected Services Preview Bar */}
         {selectedServices.length > 0 && (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 6 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
             {selectedServices.map((s) => (
               <View
                 key={`sel_${s.id}`}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  paddingVertical: 5,
-                  paddingHorizontal: 10,
-                  borderRadius: radii.pill,
-                  borderWidth: 1,
-                  backgroundColor: colors.surface,
-                  borderColor: colors.accent,
-                  marginRight: 6,
-                }}
+                style={[
+                  styles.selectedServiceTag,
+                  { backgroundColor: colors.accent900, borderColor: colors.accent },
+                ]}
               >
                 <Text style={{ color: colors.accent100, fontSize: 12, fontWeight: '600' }}>{s.name}</Text>
                 <Text style={{ color: colors.accent200, fontSize: 11, marginLeft: 6 }}>
                   {inrFromMinor(s.price_minor)}
                 </Text>
-                <TouchableOpacity onPress={() => toggleService(s.id)} style={{ marginLeft: 6 }}>
-                  <Text style={{ color: colors.textDim, fontSize: 11 }}>✕</Text>
+                <TouchableOpacity onPress={() => toggleService(s.id)} style={{ marginLeft: 6, padding: 2 }}>
+                  <Text style={{ color: colors.accent200, fontSize: 12, fontWeight: 'bold' }}>✕</Text>
                 </TouchableOpacity>
               </View>
             ))}
           </ScrollView>
         )}
 
-        {/* 1. ⭐ POPULAR / MOST USED SERVICES */}
-        {!isServicesExpanded && popularServices.length > 0 && (
-          <View style={styles.categoryBlock}>
-            <Text style={[styles.categoryHeader, { color: colors.accent, fontWeight: '700' }]}>
-              ⭐ TOP USED SERVICES
-            </Text>
-            <View style={styles.serviceChipsGrid}>
-              {popularServices.map((s) => {
-                const isSelected = selectedServiceIds.includes(s.id);
-                return (
-                  <TouchableOpacity
-                    key={`pop_${s.id}`}
-                    activeOpacity={0.75}
-                    onPress={() => toggleService(s.id)}
-                    style={[
-                      styles.serviceButton,
-                      {
-                        borderColor: isSelected ? colors.accent : colors.divider,
-                        backgroundColor: isSelected ? colors.accent900 : colors.surface,
-                      },
-                    ]}
-                  >
-                    <Text style={[styles.serviceName, { color: colors.text }]}>{s.name}</Text>
-                    <Text
-                      style={[
-                        styles.servicePrice,
-                        { color: isSelected ? colors.accent200 : colors.textDim },
-                      ]}
-                    >
-                      {inrFromMinor(s.price_minor)}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-          </View>
-        )}
-
-        {/* 2. REGULAR SERVICE CATEGORIES (Shown when expanded) */}
-        {isServicesExpanded &&
-          categoryGroups.map((group) => (
-            <View key={group.category} style={styles.categoryBlock}>
-              <Text style={[styles.categoryHeader, { color: colors.textSubtle }]}>
-                {group.category}
-              </Text>
-              <View style={styles.serviceChipsGrid}>
-                {group.services.map((s) => {
+        {/* 3-COLUMN SQUARE GRID CONTAINER (Shown when expanded) */}
+        {isServicesExpanded && (
+          <View style={[styles.servicesGridContainer, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+            {services.length === 0 ? (
+              <View style={{ padding: 20, alignItems: 'center' }}>
+                <Text style={{ color: colors.textDim, fontSize: 13 }}>No services found. Add services in Prices & Offers.</Text>
+              </View>
+            ) : (
+              <View style={styles.threeColumnGrid}>
+                {services.map((s) => {
                   const isSelected = selectedServiceIds.includes(s.id);
                   return (
                     <TouchableOpacity
@@ -529,18 +562,37 @@ export const NewBillScreen = ({
                       activeOpacity={0.75}
                       onPress={() => toggleService(s.id)}
                       style={[
-                        styles.serviceButton,
+                        styles.squareServiceCard,
                         {
+                          backgroundColor: isSelected ? colors.accent900 : colors.bg,
                           borderColor: isSelected ? colors.accent : colors.divider,
-                          backgroundColor: isSelected ? colors.accent900 : colors.surface,
                         },
                       ]}
                     >
-                      <Text style={[styles.serviceName, { color: colors.text }]}>{s.name}</Text>
+                      <View
+                        style={[
+                          styles.cardCheckBadge,
+                          {
+                            backgroundColor: isSelected ? colors.accent : 'transparent',
+                            borderColor: isSelected ? colors.accent : colors.divider,
+                          },
+                        ]}
+                      >
+                        {isSelected && <Text style={{ color: '#000', fontSize: 9, fontWeight: 'bold' }}>✓</Text>}
+                      </View>
                       <Text
                         style={[
-                          styles.servicePrice,
-                          { color: isSelected ? colors.accent200 : colors.textDim },
+                          styles.squareServiceName,
+                          { color: isSelected ? colors.accent100 : colors.text },
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {s.name}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.squareServicePrice,
+                          { color: isSelected ? colors.accent : colors.textDim },
                         ]}
                       >
                         {inrFromMinor(s.price_minor)}
@@ -549,8 +601,9 @@ export const NewBillScreen = ({
                   );
                 })}
               </View>
-            </View>
-          ))}
+            )}
+          </View>
+        )}
 
         {/* STYLIST SECTION */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 12 }]}>
@@ -683,33 +736,146 @@ export const NewBillScreen = ({
           {t('paymentMode')}
         </Text>
         <View style={styles.paymentRow}>
-          {['UPI', 'Cash', 'Card'].map((mode) => {
+          {(['UPI', 'Cash', 'Card', 'Partial Pay', 'Fully Pending'] as const).map((mode) => {
             const isSelected = paymentMode === mode;
+            const modeLabel =
+              mode === 'Partial Pay'
+                ? t('partialPay', 'Partial Pay')
+                : mode === 'Fully Pending'
+                ? t('fullyPending', 'Fully Pending')
+                : mode;
             return (
               <TouchableOpacity
                 key={mode}
                 activeOpacity={0.8}
-                onPress={() => setPaymentMode(mode)}
+                onPress={() => {
+                  setPaymentMode(mode);
+                  if (mode === 'Partial Pay') {
+                    setPartialPaidInput('');
+                  }
+                }}
                 style={[
                   styles.paymentButton,
                   {
                     borderColor: isSelected ? colors.accent : colors.divider,
-                    backgroundColor: isSelected ? colors.accent900 : 'transparent',
+                    backgroundColor: isSelected ? colors.accent900 : colors.surface,
                   },
                 ]}
               >
                 <Text
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
                   style={[
                     styles.paymentButtonText,
                     { color: isSelected ? colors.accent : colors.textMuted },
                   ]}
                 >
-                  {mode}
+                  {modeLabel}
                 </Text>
               </TouchableOpacity>
             );
           })}
         </View>
+
+        {/* PARTIAL PAY DETAILS */}
+        {paymentMode === 'Partial Pay' && (
+          <View style={[styles.dueDetailCard, { backgroundColor: colors.surface, borderColor: colors.accent }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
+                {t('amountPaidNow', 'Amount Paid Now')} (₹):
+              </Text>
+              <TextInput
+                style={[
+                  styles.partialInput,
+                  {
+                    color: colors.accent,
+                    borderColor:
+                      (parseFloat(partialPaidInput) || 0) * 100 > totalMinor
+                        ? colors.error
+                        : colors.accent,
+                    backgroundColor: colors.bg,
+                  },
+                ]}
+                keyboardType="numeric"
+                value={partialPaidInput}
+                onChangeText={(txt) => setPartialPaidInput(txt.replace(/\D/g, ''))}
+                placeholder="0"
+                placeholderTextColor={colors.textDim}
+              />
+            </View>
+
+            {(parseFloat(partialPaidInput) || 0) * 100 > totalMinor && (
+              <Text style={{ color: colors.error, fontSize: 11, marginTop: 4 }}>
+                Paid amount cannot exceed total bill of {inrFromMinor(totalMinor)}
+              </Text>
+            )}
+
+            {/* Upfront Payment Mode (UPI / Cash / Card) */}
+            <View style={{ marginTop: 12 }}>
+              <Text style={{ color: colors.textDim, fontSize: 12, marginBottom: 6 }}>
+                Paid via:
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8 }}>
+                {(['UPI', 'Cash', 'Card'] as const).map((method) => {
+                  const isSel = partialPaymentMode === method;
+                  return (
+                    <TouchableOpacity
+                      key={method}
+                      onPress={() => setPartialPaymentMode(method)}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 7,
+                        borderRadius: radii.sm,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: isSel ? colors.accent900 : colors.bg,
+                        borderWidth: 1,
+                        borderColor: isSel ? colors.accent : colors.divider,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 12,
+                          fontWeight: '600',
+                          color: isSel ? colors.accent : colors.textMuted,
+                        }}
+                      >
+                        {method}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={[styles.dueCalculationRow, { borderTopColor: colors.divider }]}>
+              <Text style={{ color: colors.textDim, fontSize: 12 }}>
+                {t('remainingDue', 'Remaining Due (stored to customer)')}:
+              </Text>
+              <Text style={{ color: colors.error, fontSize: 14, fontWeight: '700' }}>
+                {inrFromMinor(
+                  Math.max(
+                    0,
+                    totalMinor - Math.min(totalMinor, Math.round((parseFloat(partialPaidInput) || 0) * 100))
+                  )
+                )}
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* FULLY PENDING BANNER */}
+        {paymentMode === 'Fully Pending' && (
+          <View style={[styles.dueDetailCard, { backgroundColor: 'rgba(255, 59, 48, 0.08)', borderColor: colors.error }]}>
+            <Text style={{ color: colors.error, fontSize: 13, fontWeight: '600', marginBottom: 2 }}>
+              ⏳ Fully Pending Bill
+            </Text>
+            <Text style={{ color: colors.textDim, fontSize: 12 }}>
+              Full amount of {inrFromMinor(totalMinor)} will be registered as outstanding due for {customerName}.
+            </Text>
+          </View>
+        )}
       </ScrollView>
 
       {/* Cart Summary Bottom Bar */}
@@ -752,50 +918,62 @@ export const NewBillScreen = ({
       >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
+          style={{ flex: 1 }}
         >
-          <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
-              <TouchableOpacity onPress={() => setIsAddClientModalOpen(false)}>
-                <Text style={{ color: colors.textDim, fontSize: 16 }}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
-            <TextInput
-              style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
-              placeholder="e.g. Ramesh Kumar"
-              placeholderTextColor="rgba(255,255,255,0.3)"
-              value={newClientName}
-              onChangeText={setNewClientName}
-            />
-
-            <Text style={[styles.inputLabel, { color: colors.textDim, marginTop: 14 }]}>
-              {t('mobileNumber')}
-            </Text>
-            <TextInput
-              style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
-              placeholder="e.g. 9876543210"
-              placeholderTextColor="rgba(255,255,255,0.3)"
-              keyboardType="phone-pad"
-              maxLength={10}
-              value={newClientPhone}
-              onChangeText={setNewClientPhone}
-            />
-
+          <View style={styles.modalOverlay}>
             <TouchableOpacity
-              activeOpacity={0.8}
-              disabled={isSavingClient}
-              onPress={handleSaveQuickClient}
-              style={[styles.saveModalBtn, { backgroundColor: colors.accent }]}
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setIsAddClientModalOpen(false)}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
+              keyboardShouldPersistTaps="handled"
             >
-              {isSavingClient ? (
-                <ActivityIndicator color="#0D0E11" />
-              ) : (
-                <Text style={styles.saveModalBtnText}>{t('save')}</Text>
-              )}
-            </TouchableOpacity>
+              <View style={[styles.modalSheet, { backgroundColor: colors.surface }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
+                  <TouchableOpacity onPress={() => setIsAddClientModalOpen(false)}>
+                    <Text style={{ color: colors.textDim, fontSize: 16 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                  placeholder="e.g. Ramesh Kumar"
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={newClientName}
+                  onChangeText={setNewClientName}
+                />
+
+                <Text style={[styles.inputLabel, { color: colors.textDim, marginTop: 14 }]}>
+                  {t('mobileNumber')}
+                </Text>
+                <TextInput
+                  style={[styles.modalInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                  placeholder="e.g. 9876543210"
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                  value={newClientPhone}
+                  onChangeText={(txt) => setNewClientPhone(txt.replace(/\D/g, '').slice(0, 10))}
+                />
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  disabled={isSavingClient}
+                  onPress={handleSaveQuickClient}
+                  style={[styles.saveModalBtn, { backgroundColor: colors.accent }]}
+                >
+                  {isSavingClient ? (
+                    <ActivityIndicator color="#0D0E11" />
+                  ) : (
+                    <Text style={styles.saveModalBtnText}>{t('save')}</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -825,7 +1003,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 6,
-    paddingBottom: 24,
+    paddingBottom: 140,
   },
   sectionLabel: {
     fontSize: 10,
@@ -864,17 +1042,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   addClientBtn: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    justifyContent: 'center',
+    width: 38,
+    height: 38,
     borderRadius: radii.md,
     borderWidth: 1,
-  },
-  addClientBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
   },
   selectedCustomerCard: {
     flexDirection: 'row',
@@ -912,6 +1085,77 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderBottomWidth: 1,
+  },
+  chooseServicesBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  chooseServicesTitle: {
+    fontSize: 13.5,
+    fontWeight: '600',
+  },
+  chooseServicesSub: {
+    fontSize: 11.5,
+    marginTop: 2,
+  },
+  selectedServiceTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    marginRight: 6,
+  },
+  servicesGridContainer: {
+    padding: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  threeColumnGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  squareServiceCard: {
+    width: '31.3%',
+    aspectRatio: 1,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: 8,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  cardCheckBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  squareServiceName: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 14,
+    lineHeight: 15,
+  },
+  squareServicePrice: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   categoryBlock: {
     marginBottom: 12,
@@ -1002,19 +1246,52 @@ const styles = StyleSheet.create({
   },
   paymentRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 6,
   },
   paymentButton: {
-    flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderRadius: radii.md,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    minWidth: '22%',
+    flexGrow: 1,
   },
   paymentButtonText: {
     fontSize: 12.5,
     fontWeight: '500',
+  },
+  dueDetailCard: {
+    marginTop: 10,
+    padding: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+  },
+  partialInput: {
+    width: 100,
+    height: 38,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    paddingHorizontal: 10,
+    fontSize: 14,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  fractionBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  dueCalculationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
   },
   bottomBar: {
     paddingHorizontal: 16,
@@ -1023,16 +1300,20 @@ const styles = StyleSheet.create({
   },
   summaryRow: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 9,
   },
   summaryText: {
     fontSize: 12,
+    flex: 1,
+    minWidth: 160,
   },
   totalText: {
-    marginLeft: 'auto',
     fontSize: 22,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   modalOverlay: {
     flex: 1,

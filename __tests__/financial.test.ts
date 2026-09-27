@@ -64,11 +64,11 @@ describe('Financial Correctness and Billing Service', () => {
     ];
 
     const pnl = financialService.getPnLMetrics('Day', sampleBills, sampleExpenses);
-    expect(pnl.income_minor).toBe(80000);
+    expect(pnl.income_minor).toBe(50000);
     expect(pnl.expense_minor).toBe(20000);
-    expect(pnl.net_minor).toBe(60000);
+    expect(pnl.net_minor).toBe(30000);
     expect(pnl.dues_minor).toBe(30000);
-    expect(pnl.margin_pct).toBe(75);
+    expect(pnl.margin_pct).toBe(60);
     expect(pnl.categories.length).toBe(1);
     expect(pnl.categories[0].label).toBe('Products & stock');
   });
@@ -86,5 +86,112 @@ describe('Financial Correctness and Billing Service', () => {
         expect(dict[k].length).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('aggregates sales strictly from actual payment amounts received, not bill totals', () => {
+    const { financialService } = require('../src/services/financialService');
+    const now = new Date();
+    const todayIso = now.toISOString();
+
+    const bills = [
+      // 1. Fully paid bill: ₹1,000 total, ₹1,000 paid via UPI
+      {
+        id: 'bill_full',
+        total_minor: 100000,
+        paid_amount_minor: 100000,
+        due_amount_minor: 0,
+        status: 'paid',
+        payment_method: 'UPI',
+        created_at: todayIso,
+        items: [],
+        payments: [
+          { amount_minor: 100000, method: 'UPI', paid_at: todayIso },
+        ],
+      },
+      // 2. Partial pay bill: ₹3,000 total, ₹1,500 paid now via Cash, ₹1,500 due
+      {
+        id: 'bill_partial',
+        total_minor: 300000,
+        paid_amount_minor: 150000,
+        due_amount_minor: 150000,
+        status: 'partially_paid',
+        payment_method: 'Cash',
+        created_at: todayIso,
+        items: [],
+        payments: [
+          { amount_minor: 150000, method: 'Cash', paid_at: todayIso },
+        ],
+      },
+      // 3. Fully pending bill: ₹2,000 total, ₹0 paid now, ₹2,000 due
+      {
+        id: 'bill_pending',
+        total_minor: 200000,
+        paid_amount_minor: 0,
+        due_amount_minor: 200000,
+        status: 'pending',
+        payment_method: 'UPI',
+        created_at: todayIso,
+        items: [],
+        payments: [],
+      },
+    ];
+
+    const metrics = financialService.getSalesMetrics('Day', bills);
+
+    // Total actual collected: 1000 + 1500 + 0 = 2500 (250,000 minor)
+    expect(metrics.total_minor).toBe(250000);
+
+    // Method breakdown:
+    // UPI: 1000 (100,000 minor)
+    // Cash: 1500 (150,000 minor)
+    const upiMode = metrics.modes.find((m: any) => m.label === 'UPI');
+    const cashMode = metrics.modes.find((m: any) => m.label === 'Cash');
+
+    expect(upiMode?.amt_minor).toBe(100000);
+    expect(cashMode?.amt_minor).toBe(150000);
+
+    // Now simulate settling the remaining ₹1,500 due from bill_partial:
+    bills[1].payments.push({
+      amount_minor: 150000,
+      method: 'UPI',
+      paid_at: todayIso,
+    });
+    bills[1].due_amount_minor = 0;
+    bills[1].status = 'paid';
+
+    const settledMetrics = financialService.getSalesMetrics('Day', bills);
+    // Now total sales should be: 2500 + 1500 = 4000 (400,000 minor)
+    expect(settledMetrics.total_minor).toBe(400000);
+    const updatedUpiMode = settledMetrics.modes.find((m: any) => m.label === 'UPI');
+    expect(updatedUpiMode?.amt_minor).toBe(250000); // 1000 + 1500 = 2500
+  });
+
+  it('correctly calculates remaining due when a customer makes a partial due payment', () => {
+    // Customer has ₹500 opening due (50,000 minor)
+    const initialDueMinor = 50000;
+    const amountPayingNowMinor = 30000; // Customer pays ₹300
+
+    const remainingDueMinor = Math.max(0, initialDueMinor - amountPayingNowMinor);
+    expect(remainingDueMinor).toBe(20000); // ₹200 remains, NOT cleared to ₹0
+
+    const bill = {
+      id: 'due_bill_1',
+      total_minor: initialDueMinor,
+      paid_amount_minor: amountPayingNowMinor,
+      due_amount_minor: remainingDueMinor,
+      status: remainingDueMinor === 0 ? 'paid' : 'partially_paid',
+      payments: [
+        { amount_minor: amountPayingNowMinor, method: 'Cash', paid_at: new Date().toISOString() },
+      ],
+    };
+
+    expect(bill.status).toBe('partially_paid');
+    expect(bill.paid_amount_minor).toBe(30000);
+    expect(bill.due_amount_minor).toBe(20000);
+
+    const { financialService } = require('../src/services/financialService');
+    const metrics = financialService.getSalesMetrics('Day', [bill]);
+    // The ₹300 paid is added to today's sales
+    expect(metrics.total_minor).toBe(30000);
   });
 });

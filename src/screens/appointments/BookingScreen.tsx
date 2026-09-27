@@ -15,15 +15,78 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Button } from '../../components/common/Button';
-import { BackIcon, CheckIcon, SearchIcon, PlusIcon } from '../../components/common/SvgIcons';
-import { Customer, StaffMember, Service } from '../../types/domain';
+import { BackIcon, CheckIcon, SearchIcon, PlusIcon, UserPlusIcon } from '../../components/common/SvgIcons';
+import { Customer, StaffMember, Service, Appointment } from '../../types/domain';
 import { inr, inrFromMinor, getInitials } from '../../utils/format';
 import { radii, shadows } from '../../theme/spacing';
+
+const ALL_TIME_SLOTS = [
+  { label: '09:30 AM', hour: 9, min: 30 },
+  { label: '10:00 AM', hour: 10, min: 0 },
+  { label: '10:30 AM', hour: 10, min: 30 },
+  { label: '11:00 AM', hour: 11, min: 0 },
+  { label: '11:30 AM', hour: 11, min: 30 },
+  { label: '12:00 PM', hour: 12, min: 0 },
+  { label: '12:30 PM', hour: 12, min: 30 },
+  { label: '01:00 PM', hour: 13, min: 0 },
+  { label: '02:00 PM', hour: 14, min: 0 },
+  { label: '02:30 PM', hour: 14, min: 30 },
+  { label: '03:00 PM', hour: 15, min: 0 },
+  { label: '03:30 PM', hour: 15, min: 30 },
+  { label: '04:00 PM', hour: 16, min: 0 },
+  { label: '04:30 PM', hour: 16, min: 30 },
+  { label: '05:00 PM', hour: 17, min: 0 },
+  { label: '05:30 PM', hour: 17, min: 30 },
+  { label: '06:00 PM', hour: 18, min: 0 },
+  { label: '06:30 PM', hour: 18, min: 30 },
+  { label: '07:00 PM', hour: 19, min: 0 },
+  { label: '07:30 PM', hour: 19, min: 30 },
+  { label: '08:00 PM', hour: 20, min: 0 },
+  { label: '08:30 PM', hour: 20, min: 30 },
+] as const;
+
+function getSlotHourMin(timeStr?: string): { hour: number; min: number } | null {
+  if (!timeStr) return null;
+  const ampmMatch = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (ampmMatch) {
+    let h = parseInt(ampmMatch[1], 10);
+    const m = parseInt(ampmMatch[2], 10);
+    const meridian = ampmMatch[3].toUpperCase();
+    if (meridian === 'PM' && h < 12) h += 12;
+    if (meridian === 'AM' && h === 12) h = 0;
+    return { hour: h, min: m };
+  }
+  const iso24Match = timeStr.match(/(?:T|\s)(\d{1,2}):(\d{2})/);
+  if (iso24Match) {
+    return { hour: parseInt(iso24Match[1], 10), min: parseInt(iso24Match[2], 10) };
+  }
+  const simpleMatch = timeStr.match(/^(\d{1,2}):(\d{2})/);
+  if (simpleMatch) {
+    let h = parseInt(simpleMatch[1], 10);
+    const m = parseInt(simpleMatch[2], 10);
+    if (h >= 1 && h <= 7) h += 12;
+    return { hour: h, min: m };
+  }
+  return null;
+}
+
+function getApptDateStr(appt: Appointment): string {
+  if (appt.starts_at) {
+    const m = appt.starts_at.match(/\d{4}-\d{2}-\d{2}/);
+    if (m) return m[0];
+  }
+  if (appt.created_at) {
+    const m = appt.created_at.match(/\d{4}-\d{2}-\d{2}/);
+    if (m) return m[0];
+  }
+  return '';
+}
 
 interface BookingScreenProps {
   customers: Customer[];
   services: Service[];
   staff: StaffMember[];
+  appointments?: Appointment[];
   initialCustomerId?: string | null;
   onBack: () => void;
   onAddNewCustomer?: (name: string, phone: string) => Promise<Customer>;
@@ -47,6 +110,7 @@ export const BookingScreen = ({
   customers,
   services,
   staff,
+  appointments = [],
   initialCustomerId,
   onBack,
   onAddNewCustomer,
@@ -65,11 +129,11 @@ export const BookingScreen = ({
   const [newClientName, setNewClientName] = useState('');
   const [newClientPhone, setNewClientPhone] = useState('');
 
-  // Service multi-selection & Expand state (Default to 0 selected services)
+  // Service multi-selection & Expand state (no services pre-selected)
   const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [isServicesExpanded, setIsServicesExpanded] = useState(false);
 
-  // Stylist selection: -1 means "Any Stylist / No Stylist"
+  // Stylist selection: null means "Any Stylist / No Stylist"
   const [selectedStaffId, setSelectedStaffId] = useState<string | null>(null);
 
   // Date selection - strictly Today and future days (no past dates)
@@ -93,32 +157,6 @@ export const BookingScreen = ({
 
   const selectedDay = upcomingDays[selectedDayOffset] || upcomingDays[0];
 
-  // Standard salon time slots
-  const allTimeSlots = [
-    { label: '09:30 AM', hour: 9, min: 30 },
-    { label: '10:00 AM', hour: 10, min: 0 },
-    { label: '10:30 AM', hour: 10, min: 30 },
-    { label: '11:00 AM', hour: 11, min: 0 },
-    { label: '11:30 AM', hour: 11, min: 30 },
-    { label: '12:00 PM', hour: 12, min: 0 },
-    { label: '12:30 PM', hour: 12, min: 30 },
-    { label: '01:00 PM', hour: 13, min: 0 },
-    { label: '02:00 PM', hour: 14, min: 0 },
-    { label: '02:30 PM', hour: 14, min: 30 },
-    { label: '03:00 PM', hour: 15, min: 0 },
-    { label: '03:30 PM', hour: 15, min: 30 },
-    { label: '04:00 PM', hour: 16, min: 0 },
-    { label: '04:30 PM', hour: 16, min: 30 },
-    { label: '05:00 PM', hour: 17, min: 0 },
-    { label: '05:30 PM', hour: 17, min: 30 },
-    { label: '06:00 PM', hour: 18, min: 0 },
-    { label: '06:30 PM', hour: 18, min: 30 },
-    { label: '07:00 PM', hour: 19, min: 0 },
-    { label: '07:30 PM', hour: 19, min: 30 },
-    { label: '08:00 PM', hour: 20, min: 0 },
-    { label: '08:30 PM', hour: 20, min: 30 },
-  ];
-
   // Check if slot has already passed if today is selected
   const now = new Date();
   const isSelectedDateToday = selectedDayOffset === 0;
@@ -135,6 +173,56 @@ export const BookingScreen = ({
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId) || null;
   const selectedStaffMember = staff.find((s) => s.id === selectedStaffId) || null;
 
+  // Booked slots map for the selected stylist on the selected date (fast, zero lag)
+  const bookedSlotsMap = useMemo(() => {
+    const map = new Map<string, Appointment>();
+    if (!selectedStaffId) return map;
+
+    const targetDate = selectedDay.dateStr;
+
+    for (const a of appointments) {
+      if (a.status === 'Cancelled' || a.status === 'Done') continue;
+      const matchesStaff =
+        a.staff_id === selectedStaffId ||
+        (selectedStaffMember &&
+          a.staff_name &&
+          a.staff_name.trim().toLowerCase() === selectedStaffMember.name.trim().toLowerCase());
+      if (!matchesStaff) continue;
+
+      const apptDate = getApptDateStr(a);
+      if (apptDate) {
+        if (apptDate !== targetDate) continue;
+      } else {
+        // If appointment does not have a date, check if created_at matches targetDate
+        const createdDate = a.created_at ? a.created_at.slice(0, 10) : '';
+        if (createdDate !== targetDate) continue;
+      }
+
+      const raw = (a.starts_at || '').toUpperCase();
+      const hm = getSlotHourMin(a.starts_at);
+
+      for (const sl of ALL_TIME_SLOTS) {
+        const cleanSlot = sl.label.toUpperCase();
+        const noLeadingZero = cleanSlot.replace(/^0/, '');
+        if (raw.includes(cleanSlot) || raw.includes(noLeadingZero)) {
+          map.set(sl.label, a);
+          break;
+        } else if (hm && hm.hour === sl.hour && hm.min === sl.min) {
+          map.set(sl.label, a);
+          break;
+        }
+      }
+    }
+    return map;
+  }, [selectedStaffId, selectedStaffMember, selectedDay.dateStr, selectedDay.offset, appointments]);
+
+  // Deselect slot if it conflicts with a booked slot
+  React.useEffect(() => {
+    if (selectedSlot && bookedSlotsMap.has(selectedSlot)) {
+      setSelectedSlot(null);
+    }
+  }, [selectedSlot, bookedSlotsMap]);
+
   // Selected services list & totals
   const selectedServices = useMemo(() => {
     return services.filter((s) => selectedServiceIds.includes(s.id));
@@ -145,8 +233,8 @@ export const BookingScreen = ({
   }, [selectedServices]);
 
   const combinedServiceName = useMemo(() => {
-    return selectedServices.map((s) => s.name).join(' + ') || services[0]?.name || 'Salon Service';
-  }, [selectedServices, services]);
+    return selectedServices.map((s) => s.name).join(' + ') || '';
+  }, [selectedServices]);
 
   const toggleService = (svcId: string) => {
     setSelectedServiceIds((prev) =>
@@ -154,7 +242,32 @@ export const BookingScreen = ({
     );
   };
 
+  // Categorised service groups
+  const categoryGroups = useMemo(() => {
+    const categories = ['Hair', 'Beard', 'Colour', 'Care', 'Packages'] as const;
+    const groups: { category: string; services: Service[] }[] = [];
 
+    for (const cat of categories) {
+      const catServices = services.filter((s) => s.category_name === cat);
+      if (catServices.length > 0) {
+        groups.push({ category: cat, services: catServices });
+      }
+    }
+
+    const otherServices = services.filter(
+      (s) => !categories.includes(s.category_name as any)
+    );
+    if (otherServices.length > 0) {
+      groups.push({ category: 'Other Services', services: otherServices });
+    }
+
+    return groups;
+  }, [services]);
+
+  // Popular services sorted at top
+  const popularServices = useMemo(() => {
+    return services.slice(0, 6);
+  }, [services]);
 
   const handleQuickAddClient = async () => {
     if (!newClientName.trim()) {
@@ -162,7 +275,7 @@ export const BookingScreen = ({
       return;
     }
     const cleanPhone = newClientPhone.replace(/\D/g, '').slice(-10);
-    if (cleanPhone.length > 0 && cleanPhone.length !== 10) {
+    if (cleanPhone.length !== 10) {
       Alert.alert('Invalid Mobile', 'Please enter a valid 10-digit mobile number');
       return;
     }
@@ -181,7 +294,9 @@ export const BookingScreen = ({
     }
   };
 
-  const bookIncomplete = selectedServices.length === 0 || !selectedSlot;
+  const isSelectedSlotLocked = Boolean(selectedSlot && bookedSlotsMap.has(selectedSlot));
+
+  const bookIncomplete = selectedServices.length === 0 || !selectedSlot || isSelectedSlotLocked;
 
   const handleConfirm = () => {
     if (bookIncomplete) return;
@@ -205,9 +320,13 @@ export const BookingScreen = ({
     });
   };
 
-  const ctaText = selectedSlot
+  const ctaText = selectedServices.length === 0
+    ? t('selectServices')
+    : isSelectedSlotLocked
+    ? 'Slot Locked · Pick Another Slot'
+    : selectedSlot
     ? `${t('confirmBooking')} · ${selectedDay.dayLabel} ${selectedSlot}`
-    : t('selectServices');
+    : 'Select Time Slot';
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
@@ -279,10 +398,11 @@ export const BookingScreen = ({
             </Text>
           </TouchableOpacity>
 
-          {/* + Add Client Button */}
+          {/* Add Client Button (Icon Only) */}
           <TouchableOpacity
             activeOpacity={0.8}
             onPress={() => setIsAddClientModalOpen(true)}
+            accessibilityLabel={t('addClient', 'Add Client')}
             style={[
               styles.addClientBtn,
               {
@@ -291,8 +411,7 @@ export const BookingScreen = ({
               },
             ]}
           >
-            <PlusIcon size={13} color={colors.accent} />
-            <Text style={[styles.addClientBtnText, { color: colors.accent }]}>{t('addClient')}</Text>
+            <UserPlusIcon size={18} color={colors.accent} />
           </TouchableOpacity>
         </View>
 
@@ -387,134 +506,126 @@ export const BookingScreen = ({
         )}
 
         {/* ======================================================== */}
-        {/* 2. SERVICES (Single Collapsible Box with 3-in-a-row Grid) */}
+        {/* 2. SERVICES (Expandable Multi-Choice)                   */}
+        {/* ======================================================== */}
+        {/* ======================================================== */}
+        {/* 2. CHOOSE SERVICES TRIGGER BOX                           */}
         {/* ======================================================== */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
-          {t('services')}
+          {t('services')} ({selectedServices.length} {t('selected', 'selected')})
         </Text>
 
-        {/* The One Box: "Choose services to select" */}
         <TouchableOpacity
           activeOpacity={0.8}
-          onPress={() => setIsServicesExpanded(!isServicesExpanded)}
+          onPress={() => setIsServicesExpanded((prev) => !prev)}
           style={[
             styles.chooseServicesBox,
             {
               backgroundColor: colors.surface,
-              borderColor: isServicesExpanded || selectedServices.length > 0 ? colors.accent : colors.divider,
+              borderColor: isServicesExpanded || selectedServiceIds.length > 0 ? colors.accent : colors.divider,
             },
           ]}
         >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.chooseServicesTitle, { color: colors.text }]}>
-              Choose services to select
-            </Text>
-            <Text
-              style={[
-                styles.chooseServicesSub,
-                { color: selectedServices.length > 0 ? colors.accent : colors.textDim },
-              ]}
-            >
-              {selectedServices.length > 0
-                ? `${selectedServices.length} selected · Total: ₹${totalBookingRupees}`
-                : 'Tap to expand & select salon services'}
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, gap: 10 }}>
+            <Text style={{ fontSize: 16 }}>✨</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.chooseServicesTitle, { color: colors.text }]}>
+                {t('chooseServices', 'Choose Services')}
+              </Text>
+              <Text
+                style={[
+                  styles.chooseServicesSub,
+                  { color: selectedServiceIds.length > 0 ? colors.accent : colors.textDim },
+                ]}
+              >
+                {selectedServiceIds.length === 0
+                  ? 'Tap to select salon services'
+                  : `${selectedServiceIds.length} service${selectedServiceIds.length > 1 ? 's' : ''} selected`}
+              </Text>
+            </View>
           </View>
-          <View
-            style={[
-              styles.expandArrowBadge,
-              {
-                backgroundColor: isServicesExpanded ? colors.accent : colors.bg,
-                borderColor: colors.divider,
-              },
-            ]}
-          >
-            <Text style={{ color: isServicesExpanded ? '#0D0E11' : colors.accent, fontSize: 13, fontWeight: '700' }}>
-              {isServicesExpanded ? '▲' : '▼'}
-            </Text>
-          </View>
+          <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '700' }}>
+            {isServicesExpanded ? '▲' : '▼'}
+          </Text>
         </TouchableOpacity>
 
-        {/* Selected Services Preview Tags */}
+        {/* Selected Services Preview Bar */}
         {selectedServices.length > 0 && (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: 8 }}>
             {selectedServices.map((s) => (
               <View
                 key={`sel_${s.id}`}
-                style={[styles.selectedServiceTag, { backgroundColor: colors.surface, borderColor: colors.accent }]}
+                style={[styles.selectedServiceTag, { backgroundColor: colors.accent900, borderColor: colors.accent }]}
               >
                 <Text style={{ color: colors.accent100, fontSize: 12, fontWeight: '600' }}>{s.name}</Text>
                 <Text style={{ color: colors.accent200, fontSize: 11, marginLeft: 6 }}>
                   {inrFromMinor(s.price_minor)}
                 </Text>
-                <TouchableOpacity onPress={() => toggleService(s.id)} style={{ marginLeft: 6, paddingHorizontal: 2 }}>
-                  <Text style={{ color: colors.textDim, fontSize: 11 }}>✕</Text>
+                <TouchableOpacity onPress={() => toggleService(s.id)} style={{ marginLeft: 6, padding: 2 }}>
+                  <Text style={{ color: colors.accent200, fontSize: 12, fontWeight: 'bold' }}>✕</Text>
                 </TouchableOpacity>
               </View>
             ))}
           </ScrollView>
         )}
 
-        {/* Expanded View: All services in ONE container with 3 services in one line */}
+        {/* 3-COLUMN SQUARE GRID CONTAINER (Shown when expanded) */}
         {isServicesExpanded && (
-          <View
-            style={[
-              styles.threePerLineContainer,
-              {
-                backgroundColor: colors.surface,
-                borderColor: colors.divider,
-              },
-            ]}
-          >
-            {services.map((s) => {
-              const isSelected = selectedServiceIds.includes(s.id);
-              return (
-                <TouchableOpacity
-                  key={s.id}
-                  activeOpacity={0.75}
-                  onPress={() => toggleService(s.id)}
-                  style={[
-                    styles.threeColumnCard,
-                    {
-                      borderColor: isSelected ? colors.accent : colors.divider,
-                      backgroundColor: isSelected ? colors.accent900 : colors.bg,
-                    },
-                  ]}
-                >
-                  <View style={styles.threeColumnTopRow}>
-                    <Text
-                      numberOfLines={2}
+          <View style={[styles.servicesGridContainer, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+            {services.length === 0 ? (
+              <View style={{ padding: 20, alignItems: 'center' }}>
+                <Text style={{ color: colors.textDim, fontSize: 13 }}>No services found. Add services in Prices & Offers.</Text>
+              </View>
+            ) : (
+              <View style={styles.threeColumnGrid}>
+                {services.map((s) => {
+                  const isSelected = selectedServiceIds.includes(s.id);
+                  return (
+                    <TouchableOpacity
+                      key={s.id}
+                      activeOpacity={0.75}
+                      onPress={() => toggleService(s.id)}
                       style={[
-                        styles.threeColumnName,
-                        { color: isSelected ? colors.accent100 : colors.text },
+                        styles.squareServiceCard,
+                        {
+                          backgroundColor: isSelected ? colors.accent900 : colors.bg,
+                          borderColor: isSelected ? colors.accent : colors.divider,
+                        },
                       ]}
                     >
-                      {s.name}
-                    </Text>
-                    {isSelected && (
-                      <View style={[styles.miniCheckBadge, { backgroundColor: colors.accent }]}>
-                        <Text style={{ color: '#0D0E11', fontSize: 8, fontWeight: '800' }}>✓</Text>
+                      <View
+                        style={[
+                          styles.cardCheckBadge,
+                          {
+                            backgroundColor: isSelected ? colors.accent : 'transparent',
+                            borderColor: isSelected ? colors.accent : colors.divider,
+                          },
+                        ]}
+                      >
+                        {isSelected && <Text style={{ color: '#000', fontSize: 9, fontWeight: 'bold' }}>✓</Text>}
                       </View>
-                    )}
-                  </View>
-                  <View style={{ marginTop: 'auto' }}>
-                    <Text
-                      style={[
-                        styles.threeColumnPrice,
-                        { color: isSelected ? colors.accent200 : colors.textMuted },
-                      ]}
-                    >
-                      {inrFromMinor(s.price_minor)}
-                    </Text>
-                    {s.duration_minutes ? (
-                      <Text style={{ color: colors.textDim, fontSize: 9.5, marginTop: 1 }}>
-                        {s.duration_minutes}m
+                      <Text
+                        style={[
+                          styles.squareServiceName,
+                          { color: isSelected ? colors.accent100 : colors.text },
+                        ]}
+                        numberOfLines={2}
+                      >
+                        {s.name}
                       </Text>
-                    ) : null}
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
+                      <Text
+                        style={[
+                          styles.squareServicePrice,
+                          { color: isSelected ? colors.accent : colors.textDim },
+                        ]}
+                      >
+                        {inrFromMinor(s.price_minor)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
           </View>
         )}
 
@@ -623,13 +734,40 @@ export const BookingScreen = ({
         </ScrollView>
 
         {/* ======================================================== */}
-        {/* 5. TIME SLOTS (Strictly past times disabled on Today)   */}
+        {/* 5. TIME SLOTS (Conflict detection and locked styling)   */}
         {/* ======================================================== */}
         <Text style={[styles.sectionLabel, { color: colors.textDim, marginTop: 18 }]}>
           SLOT · {selectedDay.dayLabel.toUpperCase()} {selectedDay.dateNum}
         </Text>
+
+        {/* Stylist Active Booking Notice */}
+        {bookedSlotsMap.size > 0 && selectedStaffMember && (
+          <View
+            style={{
+              padding: 10,
+              borderRadius: radii.md,
+              backgroundColor: 'rgba(239, 68, 68, 0.08)',
+              borderWidth: 1,
+              borderColor: 'rgba(239, 68, 68, 0.3)',
+              marginTop: 6,
+              marginBottom: 10,
+            }}
+          >
+            <Text style={{ color: '#F87171', fontSize: 12.5, fontWeight: '700' }}>
+              🔒 {selectedStaffMember.name} is booked at: {Array.from(bookedSlotsMap.keys()).join(', ')}
+            </Text>
+            <Text style={{ color: colors.textMuted, fontSize: 11.5, marginTop: 2 }}>
+              Booked slots are striked out. Please choose an open slot.
+            </Text>
+          </View>
+        )}
+
         <View style={styles.slotsGrid}>
-          {allTimeSlots.map((sl) => {
+          {ALL_TIME_SLOTS.map((sl) => {
+            const bookedAppt = bookedSlotsMap.get(sl.label);
+            const isBooked = Boolean(bookedAppt);
+            const isSelected = selectedSlot === sl.label;
+
             // Check if slot has already passed for today
             let isPast = false;
             if (isSelectedDateToday) {
@@ -640,24 +778,43 @@ export const BookingScreen = ({
               }
             }
 
-            const isSelected = selectedSlot === sl.label;
+            const isSlotDisabled = isPast || isBooked;
+
+            const handleSlotPress = () => {
+              if (isPast) return;
+              if (isBooked) {
+                Alert.alert(
+                  'Stylist Already Booked',
+                  `${selectedStaffMember?.name || 'Stylist'} is already booked at ${sl.label} on this date. Please choose another time slot or another stylist.`,
+                  [{ text: 'OK' }]
+                );
+                return;
+              }
+              setSelectedSlot(sl.label);
+            };
 
             return (
               <TouchableOpacity
                 key={sl.label}
-                disabled={isPast}
-                activeOpacity={isPast ? 1 : 0.75}
-                onPress={() => setSelectedSlot(sl.label)}
+                disabled={isSlotDisabled}
+                activeOpacity={isSlotDisabled ? 1 : 0.75}
+                onPress={handleSlotPress}
                 style={[
                   styles.slotBox,
                   {
-                    borderColor: isSelected ? colors.accent : colors.divider,
+                    borderColor: isSelected
+                      ? colors.accent
+                      : isBooked
+                      ? 'rgba(239, 68, 68, 0.6)'
+                      : colors.divider,
                     backgroundColor: isSelected
                       ? colors.accent900
+                      : isBooked
+                      ? 'rgba(239, 68, 68, 0.12)'
                       : isPast
                       ? 'rgba(255,255,255,0.02)'
                       : colors.surface,
-                    opacity: isPast ? 0.3 : 1,
+                    opacity: isPast ? 0.35 : 1,
                   },
                 ]}
               >
@@ -667,15 +824,29 @@ export const BookingScreen = ({
                     {
                       color: isSelected
                         ? colors.accent
+                        : isBooked
+                        ? '#EF4444'
                         : isPast
                         ? colors.textDim
                         : colors.text,
-                      textDecorationLine: isPast ? 'line-through' : 'none',
+                      textDecorationLine: isBooked || isPast ? 'line-through' : 'none',
                     },
                   ]}
                 >
                   {sl.label}
                 </Text>
+                {isBooked && (
+                  <Text
+                    style={{
+                      fontSize: 9.5,
+                      color: '#EF4444',
+                      fontWeight: '700',
+                      marginTop: 2,
+                    }}
+                  >
+                    Booked
+                  </Text>
+                )}
               </TouchableOpacity>
             );
           })}
@@ -725,50 +896,67 @@ export const BookingScreen = ({
       {/* ======================================================== */}
       {/* QUICK ADD CLIENT MODAL                                   */}
       {/* ======================================================== */}
-      <Modal visible={isAddClientModalOpen} animationType="slide" transparent>
+      <Modal
+        visible={isAddClientModalOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setIsAddClientModalOpen(false)}
+      >
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          style={styles.modalOverlay}
+          style={{ flex: 1 }}
         >
-          <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
-              <TouchableOpacity onPress={() => setIsAddClientModalOpen(false)}>
-                <Text style={{ color: colors.textDim, fontSize: 16 }}>{t('cancel')}</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={[
-                styles.modalInput,
-                { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text },
-              ]}
-              placeholder={t('fullName')}
-              placeholderTextColor="rgba(255,255,255,0.3)"
-              value={newClientName}
-              onChangeText={setNewClientName}
-            />
-
-            <TextInput
-              style={[
-                styles.modalInput,
-                { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 10 },
-              ]}
-              placeholder={t('mobileNumber')}
-              placeholderTextColor="rgba(255,255,255,0.3)"
-              keyboardType="phone-pad"
-              maxLength={10}
-              value={newClientPhone}
-              onChangeText={setNewClientPhone}
-            />
-
+          <View style={styles.modalOverlay}>
             <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={handleQuickAddClient}
-              style={[styles.modalAddBtn, { backgroundColor: colors.accent }]}
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => setIsAddClientModalOpen(false)}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
             >
-              <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>{t('save')}</Text>
-            </TouchableOpacity>
+              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>{t('addNewCustomer')}</Text>
+                  <TouchableOpacity onPress={() => setIsAddClientModalOpen(false)}>
+                    <Text style={{ color: colors.textDim, fontSize: 16 }}>{t('cancel')}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TextInput
+                  style={[
+                    styles.modalInput,
+                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text },
+                  ]}
+                  placeholder={t('fullName')}
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={newClientName}
+                  onChangeText={setNewClientName}
+                />
+
+                <TextInput
+                  style={[
+                    styles.modalInput,
+                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, marginTop: 10 },
+                  ]}
+                  placeholder={t('mobileNumber')}
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  keyboardType="phone-pad"
+                  maxLength={10}
+                  value={newClientPhone}
+                  onChangeText={(txt) => setNewClientPhone(txt.replace(/\D/g, '').slice(0, 10))}
+                />
+
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={handleQuickAddClient}
+                  style={[styles.modalAddBtn, { backgroundColor: colors.accent }]}
+                >
+                  <Text style={{ color: '#000', fontWeight: '600', fontSize: 14 }}>{t('save')}</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -794,7 +982,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 8,
-    paddingBottom: 24,
+    paddingBottom: 140,
   },
   sectionLabel: {
     fontSize: 10,
@@ -834,17 +1022,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   addClientBtn: {
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'center',
+    width: 40,
     height: 40,
-    paddingHorizontal: 10,
     borderRadius: radii.md,
     borderWidth: 1,
-  },
-  addClientBtnText: {
-    fontSize: 12.5,
-    fontWeight: '600',
   },
   selectedCustomerCard: {
     flexDirection: 'row',
@@ -1031,7 +1214,8 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: radii.md,
     borderWidth: 1,
-    marginBottom: 6,
+    marginTop: 4,
+    marginBottom: 8,
   },
   chooseServicesTitle: {
     fontSize: 13.5,
@@ -1041,55 +1225,49 @@ const styles = StyleSheet.create({
     fontSize: 11.5,
     marginTop: 2,
   },
-  expandArrowBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  threePerLineContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  servicesGridContainer: {
     padding: 10,
     borderRadius: radii.md,
     borderWidth: 1,
-    marginTop: 6,
-    marginBottom: 10,
+    marginBottom: 12,
   },
-  threeColumnCard: {
+  threeColumnGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  squareServiceCard: {
     width: '31.3%',
+    aspectRatio: 1,
+    borderRadius: radii.md,
+    borderWidth: 1,
     padding: 8,
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  cardCheckBadge: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 16,
+    height: 16,
     borderRadius: 8,
     borderWidth: 1,
-    minHeight: 76,
-    justifyContent: 'space-between',
-  },
-  threeColumnTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  threeColumnName: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    flex: 1,
-    lineHeight: 15,
-  },
-  miniCheckBadge: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: 3,
   },
-  threeColumnPrice: {
-    fontSize: 11,
+  squareServiceName: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 14,
+    lineHeight: 15,
+  },
+  squareServicePrice: {
+    fontSize: 11.5,
     fontWeight: '700',
-    marginTop: 4,
+    textAlign: 'center',
   },
   selectedServiceTag: {
     flexDirection: 'row',
@@ -1099,5 +1277,38 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
     marginRight: 6,
+  },
+  expandedServicesBlock: {
+    gap: 12,
+    marginTop: 8,
+  },
+  categoryBlock: {
+    marginBottom: 10,
+  },
+  categoryHeader: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  expandedGrid: {
+    gap: 6,
+  },
+  serviceRowItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: radii.md,
+    borderWidth: 1,
+  },
+  checkCircle: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
