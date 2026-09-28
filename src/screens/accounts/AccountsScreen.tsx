@@ -30,6 +30,8 @@ import {
   StoreIcon,
 } from '../../components/common/SvgIcons';
 import { radii } from '../../theme/spacing';
+import { ManagePlansCard } from '../../components/subscription/ManagePlansCard';
+import { formatPriceInRupees } from '../../config/planConfig';
 
 interface AccountsScreenProps {
   openRemindersCount: number;
@@ -364,6 +366,19 @@ export const AccountsScreen = ({
         <Text style={[styles.manageTitle, { color: colors.textDim }]}>
           {t('operationsAndTools', 'OPERATIONS & TOOLS')}
         </Text>
+
+        {/* FREE TRIAL & PLAN MANAGEMENT */}
+        <ManagePlansCard
+          shopId={shopId || ''}
+          ownerName={shopName || ''}
+          phone={userPhone || ''}
+          onProceedPlan={(plan) => {
+            const template = `Hi StyleFleet, I need this subscription: ${plan.name} (${formatPriceInRupees(plan.priceInRupees)} / ${plan.durationDays} days). Please activate it for my salon.`;
+            setSupportMessage(template);
+            setSupportContact(userPhone || '');
+            setShowSupportModal(true);
+          }}
+        />
 
         {/* 2-Column Tools Grid */}
         <View style={styles.toolsGrid}>

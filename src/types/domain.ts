@@ -189,3 +189,35 @@ export interface ReminderItem {
   customer_phone?: string | null;
   amount_minor?: number;
 }
+
+export type SubscriptionStatus =
+  | 'trial'
+  | 'active'
+  | 'expired'
+  | 'payment_pending'
+  | 'payment_failed'
+  | 'cancelled';
+
+export interface SubscriptionRecord {
+  id: string;
+  user_id: string;
+  shop_id: string | null;
+  plan_id: string;
+  status: SubscriptionStatus;
+  trial_start_date: string | null;
+  trial_end_date: string | null;
+  subscription_start_date: string | null;
+  subscription_end_date: string | null;
+  cashfree_order_id?: string | null;
+  cashfree_payment_id?: string | null;
+  amount_minor: number;
+  currency: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SubscriptionStateCategory =
+  | 'TRIAL_ACTIVE'
+  | 'TRIAL_EXPIRING_SOON'
+  | 'TRIAL_EXPIRED'
+  | 'ACTIVE_SUBSCRIPTION';

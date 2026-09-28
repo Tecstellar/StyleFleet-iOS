@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, memo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Customer } from '../../types/domain';
 import { inrFromMinor, getInitials } from '../../utils/format';
+import { radii } from '../../theme/spacing';
 
 interface ContactItem {
   id: string;
@@ -29,12 +30,13 @@ interface ContactItem {
 interface ContactRowProps {
   item: ContactItem;
   isSelected: boolean;
+  isAlreadyOnRecord?: boolean;
   colors: any;
   onToggle: (id: string) => void;
   onEdit: (item: ContactItem) => void;
 }
 
-const ContactRow = memo(({ item, isSelected, colors, onToggle, onEdit }: ContactRowProps) => {
+const ContactRow = memo(({ item, isSelected, isAlreadyOnRecord, colors, onToggle, onEdit }: ContactRowProps) => {
   return (
     <View
       style={[
@@ -42,17 +44,19 @@ const ContactRow = memo(({ item, isSelected, colors, onToggle, onEdit }: Contact
         {
           backgroundColor: isSelected ? 'rgba(217,164,65,0.12)' : 'transparent',
           borderBottomColor: colors.divider,
+          opacity: isAlreadyOnRecord ? 0.65 : 1,
         },
       ]}
     >
       {/* Checkbox */}
       <TouchableOpacity
         activeOpacity={0.8}
+        disabled={isAlreadyOnRecord}
         onPress={() => onToggle(item.id)}
         style={[
           styles.checkbox,
           {
-            borderColor: isSelected ? colors.accent : colors.divider,
+            borderColor: isAlreadyOnRecord ? colors.divider : isSelected ? colors.accent : colors.divider,
             backgroundColor: isSelected ? colors.accent : 'transparent',
           },
         ]}
@@ -66,9 +70,16 @@ const ContactRow = memo(({ item, isSelected, colors, onToggle, onEdit }: Contact
         onPress={() => onEdit(item)}
         style={styles.contactInfo}
       >
-        <Text style={[styles.contactName, { color: colors.text }]} numberOfLines={1}>
-          {item.name}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Text style={[styles.contactName, { color: colors.text, flexShrink: 1 }]} numberOfLines={1}>
+            {item.name}
+          </Text>
+          {isAlreadyOnRecord && (
+            <View style={[styles.onRecordBadge, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+              <Text style={[styles.onRecordText, { color: colors.textDim }]}>Already on File</Text>
+            </View>
+          )}
+        </View>
         <Text style={[styles.contactPhone, { color: colors.textDim }]} numberOfLines={1}>
           +91 {item.phone} {item.initialDue ? `· Due: ₹${item.initialDue}` : ''}
         </Text>
@@ -282,14 +293,25 @@ export const CustomerManagerModal = ({
     }));
   }, []);
 
-  // Select / Deselect All
+  const existingCustomerPhoneSet = useMemo(() => {
+    return new Set(
+      (existingCustomers || []).map((c) => c.phone.replace(/\D/g, '').slice(-10))
+    );
+  }, [existingCustomers]);
+
+  // Select / Deselect All (only selecting contacts that are not already on record)
   const handleSelectAll = () => {
-    const allSelected = filteredContacts.every((c) => selectedContactIds[c.id]);
-    const updated: Record<string, boolean> = { ...selectedContactIds };
-    for (const c of filteredContacts) {
-      updated[c.id] = !allSelected;
+    const unaddedContacts = filteredContacts.filter((c) => !existingCustomerPhoneSet.has(c.phone));
+    const allSelected = unaddedContacts.every((c) => selectedContactIds[c.id]) && unaddedContacts.length > 0;
+    if (allSelected) {
+      setSelectedContactIds({});
+    } else {
+      const updated: Record<string, boolean> = { ...selectedContactIds };
+      for (const c of unaddedContacts) {
+        updated[c.id] = true;
+      }
+      setSelectedContactIds(updated);
     }
-    setSelectedContactIds(updated);
   };
 
   // Open single contact editor
@@ -306,12 +328,13 @@ export const CustomerManagerModal = ({
       <ContactRow
         item={item}
         isSelected={!!selectedContactIds[item.id]}
+        isAlreadyOnRecord={existingCustomerPhoneSet.has(item.phone)}
         colors={colors}
         onToggle={toggleContactSelection}
         onEdit={handleEditContact}
       />
     ),
-    [selectedContactIds, colors, toggleContactSelection, handleEditContact]
+    [selectedContactIds, existingCustomerPhoneSet, colors, toggleContactSelection, handleEditContact]
   );
 
   const keyExtractor = useCallback((item: ContactItem) => item.id, []);
@@ -355,7 +378,7 @@ export const CustomerManagerModal = ({
     setViewMode('contacts');
   };
 
-  // Batch import selected contacts
+  // Batch import selected contacts (skipping duplicate phone numbers)
   const handleImportSelected = async () => {
     const selected = deviceContacts.filter((c) => selectedContactIds[c.id]);
     if (selected.length === 0) {
@@ -363,10 +386,21 @@ export const CustomerManagerModal = ({
       return;
     }
 
+    const unadded = selected.filter((c) => !existingCustomerPhoneSet.has(c.phone));
+    const alreadyRegisteredCount = selected.length - unadded.length;
+
+    if (unadded.length === 0) {
+      Alert.alert(
+        'Already on File',
+        'All selected contact(s) are already registered in your salon customer list. No duplicates were added.'
+      );
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const { customerRepository } = await import('../../repositories/customerRepository');
-      const payload = selected.map((c) => ({
+      const payload = unadded.map((c) => ({
         name: c.name,
         phone: c.phone,
         initialDueMinor: c.initialDue ? Math.round(c.initialDue * 100) : 0,
@@ -375,7 +409,14 @@ export const CustomerManagerModal = ({
       const created = await customerRepository.importContacts(shopId, payload);
       onBatchSuccess(created);
       onClose();
-      Alert.alert('Success', `Imported ${created.length} customer(s) into database!`);
+      if (alreadyRegisteredCount > 0) {
+        Alert.alert(
+          'Import Complete',
+          `Imported ${created.length} new customer(s). Skipped ${alreadyRegisteredCount} contact(s) already on file.`
+        );
+      } else {
+        Alert.alert('Success', `Imported ${created.length} customer(s) into database!`);
+      }
     } catch (e: any) {
       Alert.alert('Import Failed', e.message || 'Error saving contacts to database.');
     } finally {
@@ -542,8 +583,13 @@ export const CustomerManagerModal = ({
           {viewMode === 'contacts' && (
             <View style={styles.contactsContainer}>
               <View style={styles.sheetHeader}>
-                <TouchableOpacity onPress={() => setViewMode('choice')}>
-                  <Text style={[styles.backNavText, { color: colors.accent }]}>← Back</Text>
+                <TouchableOpacity
+                  onPress={() => setViewMode('choice')}
+                  style={[styles.backBtnPill, { backgroundColor: colors.surface, borderColor: colors.divider }]}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.backNavText, { color: colors.accent }]}>← {t('back', 'Back')}</Text>
                 </TouchableOpacity>
                 <Text style={[styles.sheetTitle, { color: colors.text }]}>
                   {t('selectContacts', 'Phone Contacts')}
@@ -853,6 +899,24 @@ const styles = StyleSheet.create({
   backNavText: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  backBtnPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+  },
+  onRecordBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  onRecordText: {
+    fontSize: 10,
+    fontWeight: '700',
   },
   choiceContainer: {
     paddingBottom: 20,

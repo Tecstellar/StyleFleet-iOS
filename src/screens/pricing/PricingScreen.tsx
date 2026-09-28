@@ -88,6 +88,26 @@ export const PricingScreen = ({
   const [offerType, setOfferType] = useState<'percentage' | 'fixed'>('percentage');
   const [isSavingOffer, setIsSavingOffer] = useState(false);
 
+  // Local offers state ensuring immediate toggle feedback and support for all offers
+  const [localOffers, setLocalOffers] = useState<Offer[]>(() => offers || []);
+
+  React.useEffect(() => {
+    if (offers) {
+      setLocalOffers(offers);
+    }
+  }, [offers]);
+
+  const handleToggleOffer = async (offerId: string) => {
+    setLocalOffers((prev) =>
+      prev.map((o) => (o.id === offerId ? { ...o, is_active: !o.is_active } : o))
+    );
+    try {
+      await onToggleOffer(offerId);
+    } catch {
+      // ignore
+    }
+  };
+
   // AI Menu Import State
   const [isImporting, setIsImporting] = useState(false);
   const [importProgress, setImportProgress] = useState(0); // 0 to 100
@@ -647,7 +667,7 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
         {/* ======================================================== */}
         <Text style={[styles.sectionTitle, { color: colors.accent }]}>OFFERS</Text>
         <View style={styles.offersList}>
-          {offers.map((o) => (
+          {localOffers.map((o) => (
             <View
               key={o.id}
               style={[styles.offerCard, { backgroundColor: colors.surface }]}
@@ -664,7 +684,7 @@ Do NOT include markdown formatting or backticks. Only output raw JSON.`;
               {/* Toggle Switch */}
               <TouchableOpacity
                 activeOpacity={0.8}
-                onPress={() => onToggleOffer(o.id)}
+                onPress={() => handleToggleOffer(o.id)}
                 style={[
                   styles.toggleTrack,
                   {

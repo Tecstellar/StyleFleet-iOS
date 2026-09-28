@@ -272,6 +272,32 @@ export const NewBillScreen = ({
       return;
     }
 
+    // Check if client is already present in existing customers
+    const existing = customers.find(
+      (c) => c.phone.replace(/\D/g, '').slice(-10) === clean
+    );
+    if (existing) {
+      Alert.alert(
+        'Customer Already Exists',
+        `A customer named "${existing.name}" is already registered with mobile number +91 ${clean}. Would you like to select this customer?`,
+        [
+          {
+            text: `Select ${existing.name}`,
+            onPress: () => {
+              setSelectedCustomerId(existing.id);
+              setIsAddClientModalOpen(false);
+              setNewClientName('');
+              setNewClientPhone('');
+              setCustomerSearch('');
+              setIsSearchFocused(false);
+            },
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
+      );
+      return;
+    }
+
     setIsSavingClient(true);
     try {
       if (onAddNewCustomer) {

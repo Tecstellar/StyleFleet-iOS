@@ -58,51 +58,80 @@ export const generateInvoiceHtml = ({
 
   return `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Invoice - ${bill.invoice_number}</title>
   <style>
-    body {
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    @page {
+      size: A4 portrait;
+      margin: 10mm 12mm;
+    }
+    html, body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       margin: 0;
-      padding: 36px;
-      color: #111827;
+      padding: 0;
+      color: #0f172a;
       background: #ffffff;
+      -webkit-font-smoothing: antialiased;
+    }
+    .invoice-wrapper {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    @media print {
+      body {
+        background: #ffffff !important;
+        padding: 0 !important;
+      }
+      .invoice-wrapper {
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 30px;
-      border-bottom: 2px solid #111827;
-      padding-bottom: 20px;
+      margin-bottom: 24px;
+      border-bottom: 2.5px solid #0f172a;
+      padding-bottom: 16px;
     }
     .shop-title {
       font-size: 26px;
       font-weight: 800;
       letter-spacing: -0.5px;
       margin: 0 0 6px 0;
-      color: #0f172a;
+      color: #000000;
     }
     .shop-meta {
       font-size: 13px;
-      color: #64748b;
+      font-weight: 500;
+      color: #334155;
       margin: 0 0 4px 0;
+      line-height: 1.4;
     }
     .logo-img {
       width: 72px;
       height: 72px;
-      border-radius: 12px;
+      border-radius: 10px;
       object-fit: cover;
-      border: 1px solid #e2e8f0;
+      border: 1.5px solid #cbd5e1;
     }
     .logo-box {
       width: 64px;
       height: 64px;
-      border-radius: 12px;
+      border-radius: 10px;
       background: #0f172a;
-      color: #f8fafc;
+      color: #ffffff;
       font-weight: 800;
       font-size: 20px;
       display: flex;
@@ -113,27 +142,28 @@ export const generateInvoiceHtml = ({
     .invoice-details {
       display: flex;
       justify-content: space-between;
-      background: #f8fafc;
-      padding: 16px 20px;
-      border-radius: 10px;
-      margin-bottom: 28px;
+      background: #f1f5f9;
+      border: 1px solid #cbd5e1;
+      padding: 14px 18px;
+      border-radius: 8px;
+      margin-bottom: 24px;
     }
     .detail-group {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 3px;
     }
     .detail-label {
       font-size: 11px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #64748b;
-      font-weight: 600;
+      letter-spacing: 0.6px;
+      color: #475569;
+      font-weight: 700;
     }
     .detail-value {
       font-size: 14px;
-      font-weight: 600;
-      color: #0f172a;
+      font-weight: 700;
+      color: #000000;
     }
     table {
       width: 100%;
@@ -144,74 +174,87 @@ export const generateInvoiceHtml = ({
       text-align: left;
       font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #64748b;
-      padding-bottom: 10px;
-      border-bottom: 2px solid #e2e8f0;
+      letter-spacing: 0.6px;
+      color: #0f172a;
+      background: #f8fafc;
+      padding: 10px 8px;
+      border-top: 1.5px solid #0f172a;
+      border-bottom: 1.5px solid #0f172a;
+      font-weight: 800;
     }
     .totals {
-      width: 280px;
+      width: 320px;
       margin-left: auto;
-      margin-bottom: 30px;
+      margin-bottom: 24px;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 14px 18px;
     }
     .total-row {
       display: flex;
       justify-content: space-between;
-      padding: 6px 0;
+      padding: 5px 0;
       font-size: 14px;
-      color: #475569;
+      color: #334155;
+      font-weight: 500;
     }
     .total-row.grand {
       border-top: 2px solid #0f172a;
+      border-bottom: 2px solid #0f172a;
       margin-top: 8px;
-      padding-top: 12px;
+      padding-top: 10px;
+      padding-bottom: 10px;
       font-size: 18px;
       font-weight: 800;
-      color: #0f172a;
+      color: #000000;
     }
     .paid-badge {
       display: inline-block;
       background: #dcfce7;
-      color: #166534;
-      padding: 4px 10px;
+      color: #14532d;
+      border: 1.5px solid #16a34a;
+      padding: 5px 12px;
       border-radius: 6px;
       font-size: 12px;
-      font-weight: 700;
-      margin-top: 6px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
     }
     .partial-badge {
       display: inline-block;
       background: #fef3c7;
-      color: #b45309;
-      padding: 4px 10px;
+      color: #78350f;
+      border: 1.5px solid #d97706;
+      padding: 5px 12px;
       border-radius: 6px;
       font-size: 12px;
-      font-weight: 700;
-      margin-top: 6px;
-      border: 1px solid #fde68a;
+      font-weight: 800;
+      letter-spacing: 0.5px;
     }
     .pending-badge {
       display: inline-block;
       background: #fee2e2;
-      color: #991b1b;
-      padding: 4px 10px;
+      color: #7f1d1d;
+      border: 1.5px solid #dc2626;
+      padding: 5px 12px;
       border-radius: 6px;
       font-size: 12px;
-      font-weight: 700;
-      margin-top: 6px;
-      border: 1px solid #fecaca;
+      font-weight: 800;
+      letter-spacing: 0.5px;
     }
     .footer {
       text-align: center;
-      margin-top: 40px;
-      padding-top: 20px;
-      border-top: 1px dashed #cbd5e1;
-      font-size: 13px;
-      color: #94a3b8;
+      margin-top: 32px;
+      padding-top: 16px;
+      border-top: 1.5px dashed #cbd5e1;
+      font-size: 12px;
+      color: #475569;
+      font-weight: 500;
     }
   </style>
 </head>
 <body>
+<div class="invoice-wrapper">
   <div class="header">
     <div>
       <h1 class="shop-title">${shopName}</h1>
@@ -249,9 +292,9 @@ export const generateInvoiceHtml = ({
   <table>
     <thead>
       <tr>
-        <th style="width: 60%;">Service / Description</th>
-        <th style="text-align: center; width: 15%;">Qty</th>
-        <th style="text-align: right; width: 25%;">Amount</th>
+        <th style="width: 58%;">Service / Description</th>
+        <th style="text-align: center; width: 14%;">Qty</th>
+        <th style="text-align: right; width: 28%;">Amount</th>
       </tr>
     </thead>
     <tbody>
@@ -262,12 +305,12 @@ export const generateInvoiceHtml = ({
   <div class="totals">
     <div class="total-row">
       <span>Subtotal</span>
-      <span>${inrFromMinor(bill.subtotal_minor)}</span>
+      <span style="font-weight: 700; color: #000000;">${inrFromMinor(bill.subtotal_minor)}</span>
     </div>
     ${
       bill.discount_minor > 0
         ? `
-    <div class="total-row" style="color: #b45309;">
+    <div class="total-row" style="color: #b45309; font-weight: 600;">
       <span>Discount</span>
       <span>- ${inrFromMinor(bill.discount_minor)}</span>
     </div>`
@@ -276,7 +319,7 @@ export const generateInvoiceHtml = ({
     ${
       bill.tax_minor > 0
         ? `
-    <div class="total-row">
+    <div class="total-row" style="color: #475569;">
       <span>GST (18%)</span>
       <span>${inrFromMinor(bill.tax_minor)}</span>
     </div>`
@@ -286,15 +329,15 @@ export const generateInvoiceHtml = ({
       <span>Total Amount</span>
       <span>${inrFromMinor(bill.total_minor)}</span>
     </div>
-    <div class="total-row" style="color: ${paidMinor > 0 ? '#166534' : '#64748b'}; font-weight: 600;">
-      <span>Amount Paid${paidMinor > 0 ? ` (${bill.payment_method})` : ''}</span>
+    <div class="total-row" style="color: ${paidMinor > 0 ? '#15803d' : '#475569'}; font-weight: 700;">
+      <span>Amount Paid${paidMinor > 0 ? ` (${bill.payment_method.toUpperCase()})` : ''}</span>
       <span>${inrFromMinor(paidMinor)}</span>
     </div>
-    <div class="total-row" style="color: ${dueMinor > 0 ? '#dc2626' : '#64748b'}; font-weight: ${dueMinor > 0 ? '700' : '500'}; ${dueMinor > 0 ? 'border-top: 1px dashed #fca5a5; margin-top: 6px; padding-top: 6px;' : ''}">
+    <div class="total-row" style="color: ${dueMinor > 0 ? '#b91c1c' : '#475569'}; font-weight: ${dueMinor > 0 ? '800' : '600'}; ${dueMinor > 0 ? 'border-top: 1px dashed #fca5a5; margin-top: 6px; padding-top: 6px;' : ''}">
       <span>Amount Due</span>
       <span>${inrFromMinor(dueMinor)}</span>
     </div>
-    <div style="text-align: right; margin-top: 8px;">
+    <div style="text-align: right; margin-top: 10px;">
       ${
         isPartiallyPaid
           ? `<span class="partial-badge">PARTIALLY PAID · DUE ${inrFromMinor(dueMinor)}</span>`
@@ -306,9 +349,10 @@ export const generateInvoiceHtml = ({
   </div>
 
   <div class="footer">
-    <p>Thank you for choosing ${shopName}!</p>
-    <p style="font-size: 11px; margin-top: 4px;">Powered by StyleFleet</p>
+    <p style="margin: 0; font-weight: 600;">Thank you for choosing ${shopName}!</p>
+    <p style="font-size: 11px; margin-top: 4px; color: #94a3b8;">Powered by StyleFleet Salon OS</p>
   </div>
+</div>
 </body>
 </html>
 `;

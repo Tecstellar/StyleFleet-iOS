@@ -1172,9 +1172,10 @@ export const AppNavigator = () => {
             }}
             onToggleOffer={async (offerId: string) => {
               if (!currentShop) return;
-              const next = await offerRepository.toggleOffer(currentShop.id, offerId);
+              const current = offers.find((o) => String(o.id) === String(offerId));
+              const next = await offerRepository.toggleOffer(currentShop.id, offerId, current?.is_active);
               setOffers((prev) =>
-                prev.map((o) => (o.id === offerId ? { ...o, is_active: next } : o))
+                prev.map((o) => (String(o.id) === String(offerId) ? { ...o, is_active: next } : o))
               );
             }}
             onRemoveOffer={async (offerId: string) => {
