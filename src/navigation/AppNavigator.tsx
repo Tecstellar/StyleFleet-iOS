@@ -863,11 +863,19 @@ export const AppNavigator = () => {
             }}
             onWhatsApp={() => navigateTo('bulk')}
             onSettleDue={handleSettleDue}
-            onUpdateCustomer={(updated) => {
+            onUpdateCustomer={async (updated) => {
               setSelectedCustomer(updated);
               setCustomers((prev) =>
                 prev.map((c) => (c.id === updated.id ? updated : c))
               );
+              if (currentShop) {
+                try {
+                  const refreshed = await billingRepository.getBills(currentShop.id);
+                  setBills(refreshed);
+                } catch (billsErr) {
+                  console.warn('Could not refresh bills:', billsErr);
+                }
+              }
             }}
           />
         )}

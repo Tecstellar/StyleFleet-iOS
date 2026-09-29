@@ -265,7 +265,11 @@ export const CustomerDetailScreen = ({
         onAddSuccess={() => {}}
         onBatchSuccess={() => {}}
         onEditSuccess={(updated) => {
-          onUpdateCustomer?.(updated);
+          try {
+            onUpdateCustomer?.(updated);
+          } catch (err) {
+            console.warn('CustomerDetailScreen onUpdateCustomer notice:', err);
+          }
         }}
       />
 

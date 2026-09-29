@@ -19,6 +19,7 @@ import { useLanguage } from '../../i18n/LanguageContext';
 import { Customer } from '../../types/domain';
 import { inrFromMinor, getInitials } from '../../utils/format';
 import { radii } from '../../theme/spacing';
+import { customerRepository } from '../../repositories/customerRepository';
 
 interface ContactItem {
   id: string;
@@ -399,7 +400,6 @@ export const CustomerManagerModal = ({
 
     setIsSubmitting(true);
     try {
-      const { customerRepository } = await import('../../repositories/customerRepository');
       const payload = unadded.map((c) => ({
         name: c.name,
         phone: c.phone,
@@ -438,10 +438,22 @@ export const CustomerManagerModal = ({
 
     setIsSubmitting(true);
     try {
-      const { customerRepository } = await import('../../repositories/customerRepository');
-
       if (customerToEdit) {
         // Edit existing customer
+        const conflict = existingCustomers?.find(
+          (c) =>
+            c.id !== customerToEdit.id &&
+            (c.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone
+        );
+        if (conflict) {
+          Alert.alert(
+            'Phone Already In Use',
+            `Mobile +91 ${cleanPhone} is already registered to another customer (${conflict.name}).`
+          );
+          setIsSubmitting(false);
+          return;
+        }
+
         const dueAmt = parseFloat(initialDue) || 0;
         const dueMinor = Math.round(dueAmt * 100);
 
@@ -453,13 +465,19 @@ export const CustomerManagerModal = ({
           dueMinor: dueMinor,
         });
         if (updated) {
-          onEditSuccess(updated);
+          try {
+            onEditSuccess(updated);
+          } catch (callbackErr) {
+            console.warn('onEditSuccess callback notice:', callbackErr);
+          }
           onClose();
           Alert.alert('Updated', 'Customer details saved successfully!');
         }
       } else {
         // Check duplicate mobile
-        const existingCust = existingCustomers?.find((c) => c.phone === cleanPhone);
+        const existingCust = existingCustomers?.find(
+          (c) => (c.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone
+        );
         if (existingCust) {
           Alert.alert(
             'Customer Already Exists',

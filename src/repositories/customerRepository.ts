@@ -337,26 +337,41 @@ export class CustomerRepository {
   ): Promise<Customer | null> {
     const list = (await this.getCachedCustomers(shopId)) || [];
     const targetIdx = list.findIndex((c) => c.id === customerId);
-    if (targetIdx === -1) return null;
 
-    const updatedCust = { ...list[targetIdx], ...updates };
-    if (updates.name) {
-      updatedCust.name = updates.name.trim();
+    let updatedCust: Customer;
+    if (targetIdx !== -1) {
+      updatedCust = { ...list[targetIdx] };
+      if (updates.name !== undefined) updatedCust.name = updates.name.trim();
+      if (updates.phone !== undefined) updatedCust.phone = updates.phone.replace(/\D/g, '').slice(-10);
+      if (updates.notes !== undefined) updatedCust.notes = updates.notes;
+      if (updates.is_starred !== undefined) updatedCust.is_starred = updates.is_starred;
+      if (updates.dueMinor !== undefined) updatedCust.outstanding_due_minor = updates.dueMinor;
+      list[targetIdx] = updatedCust;
+    } else {
+      updatedCust = {
+        id: customerId,
+        shop_id: shopId,
+        name: (updates.name || '').trim(),
+        phone: (updates.phone || '').replace(/\D/g, '').slice(-10),
+        notes: updates.notes || null,
+        preferred_staff_id: null,
+        is_starred: updates.is_starred || false,
+        visits_count: 0,
+        lifetime_spend_minor: 0,
+        outstanding_due_minor: updates.dueMinor || 0,
+        last_visit_date: null,
+        created_at: new Date().toISOString(),
+      };
+      list.push(updatedCust);
     }
-    if (updates.phone) {
-      updatedCust.phone = updates.phone.replace(/\D/g, '').slice(-10);
-    }
-    if (updates.dueMinor !== undefined) {
-      updatedCust.outstanding_due_minor = updates.dueMinor;
-    }
-    list[targetIdx] = updatedCust;
 
     try {
       const payload: any = {};
       if (updates.name !== undefined) payload.name = updatedCust.name;
       if (updates.phone !== undefined) payload.phone = updatedCust.phone;
-      if (updates.notes !== undefined) payload.notes = updates.notes;
-      if (updates.is_starred !== undefined) payload.is_starred = updates.is_starred;
+      if (updates.notes !== undefined) payload.notes = updatedCust.notes;
+      if (updates.is_starred !== undefined) payload.is_starred = updatedCust.is_starred;
+      if (updates.dueMinor !== undefined) payload.outstanding_due_minor = updates.dueMinor;
 
       await supabase
         .from('customers')
