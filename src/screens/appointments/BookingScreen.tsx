@@ -393,6 +393,15 @@ export const BookingScreen = ({
     });
   };
 
+  const decrementService = (svcId: string) => {
+    const current = serviceQuantities[svcId] || 0;
+    if (current <= 1) {
+      removeService(svcId);
+      return;
+    }
+    setServiceQuantities((prev) => ({ ...prev, [svcId]: current - 1 }));
+  };
+
   const toggleService = (svcId: string) => {
     const current = serviceQuantities[svcId] || 0;
     if (current >= MAX_SERVICE_QTY) {
@@ -823,9 +832,20 @@ export const BookingScreen = ({
                     ]}
                   >
                     {isSelected ? (
-                      <View style={[styles.qtyBadge, { backgroundColor: colors.accent }]}>
-                        <Text style={{ color: '#161826', fontSize: 10.5, fontWeight: '800' }}>×{qty}</Text>
-                      </View>
+                      <>
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          onPress={() => decrementService(s.id)}
+                          accessibilityLabel={`Reduce quantity of ${s.name}`}
+                          style={[styles.qtyMinus, { borderColor: colors.accent }]}
+                        >
+                          <Text style={{ color: colors.accent, fontSize: 13, fontWeight: '800', lineHeight: 15 }}>−</Text>
+                        </TouchableOpacity>
+                        <View style={[styles.qtyBadge, { backgroundColor: colors.accent }]}>
+                          <Text style={{ color: '#161826', fontSize: 10.5, fontWeight: '800' }}>×{qty}</Text>
+                        </View>
+                      </>
                     ) : null}
                     <Text
                       style={[styles.squareServiceName, { color: isSelected ? colors.accent100 : colors.text }]}
@@ -1901,6 +1921,17 @@ const styles = StyleSheet.create({
     height: 16,
     paddingHorizontal: 4,
     borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyMinus: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 18,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
