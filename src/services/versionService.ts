@@ -36,7 +36,7 @@ export function compareVersions(v1: string, v2: string): number {
 
 export const versionService = {
   getCurrentVersion(): string {
-    return Constants.expoConfig?.version || '1.0.1';
+    return Constants.expoConfig?.version || '1.0.4';
   },
 
   async checkAppVersion(): Promise<VersionCheckResult> {
@@ -44,6 +44,19 @@ export const versionService = {
     const defaultPlayStore = STYLEFLEET_PLAY_STORE_URL;
     const defaultAppStore = 'https://apps.apple.com/app/id6742398471';
     const defaultStoreUrl = Platform.OS === 'ios' ? defaultAppStore : defaultPlayStore;
+
+    // Never block development or Expo Go testing sessions with native store update modals
+    const isExpoGo = (Constants as any)?.appOwnership === 'expo' || (Constants as any)?.executionEnvironment === 'storeClient';
+    if (__DEV__ || isExpoGo) {
+      return {
+        isMandatoryUpdateRequired: false,
+        isUpdateAvailable: false,
+        currentVersion,
+        minRequiredVersion: currentVersion,
+        latestVersion: currentVersion,
+        storeUrl: defaultStoreUrl,
+      };
+    }
 
     try {
       const { data, error } = await supabase

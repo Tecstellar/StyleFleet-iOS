@@ -2,7 +2,7 @@
   "expo": {
     "name": "StyleFleet",
     "slug": "stylefleet",
-    "version": "1.0.0",
+    "version": "1.0.4",
     "scheme": "stylefleet",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +14,7 @@
     },
     "ios": {
       "bundleIdentifier": "com.stylefleet.app",
-      "buildNumber": "1.0.3",
+      "buildNumber": "1.0.4",
       "supportsTablet": false,
       "infoPlist": {
         "NSContactsUsageDescription": "StyleFleet needs access to your contacts to import clients into your salon roster.",
