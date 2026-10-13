@@ -56,9 +56,14 @@ class TelemetryService {
     }
   }
 
+  private isValidUUID(id: string | null | undefined): boolean {
+    if (!id) return false;
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+  }
+
   setShopId(shopId: string | null) {
-    this.currentShopId = shopId;
-    systemLogService.setShopId(shopId);
+    this.currentShopId = this.isValidUUID(shopId) ? shopId : null;
+    systemLogService.setShopId(this.currentShopId);
     // Trigger immediate stream on shop context resolution
     if (this.isStreaming) {
       this.captureAndSendTelemetry().catch(() => {});
@@ -75,7 +80,7 @@ class TelemetryService {
     const screen = Dimensions.get('screen');
 
     return {
-      shop_id: this.currentShopId,
+      shop_id: this.isValidUUID(this.currentShopId) ? this.currentShopId : null,
       device_id: devId,
       device_name: Constants.deviceName || (Platform.OS === 'android' ? 'Android Device' : 'iOS Device'),
       platform: Platform.OS,
@@ -103,16 +108,18 @@ class TelemetryService {
    * Stream live hardware telemetry to public.telemetry in Supabase
    */
   async captureAndSendTelemetry(): Promise<boolean> {
-    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!this.currentShopId || !UUID_REGEX.test(this.currentShopId)) {
-      return false;
-    }
-
     try {
       const payload = await this.collectHardwareTelemetry();
       const { error } = await supabase.from('telemetry').insert(payload as any);
 
       if (error) {
+        // If shop_id violates foreign key (e.g. shop was deleted or not yet synced in DB), retry with null shop_id
+        if ((error.code === '23503' || error.message?.includes('foreign key')) && payload.shop_id) {
+          const fallbackPayload = { ...payload, shop_id: null };
+          const { error: fallbackErr } = await supabase.from('telemetry').insert(fallbackPayload as any);
+          if (!fallbackErr) return true;
+        }
+
         // Table might not exist yet or network offline
         if (error.code !== 'PGRST205' && error.code !== '23503') {
           console.warn('[TelemetryService] Telemetry push notice:', error.message);
@@ -130,11 +137,6 @@ class TelemetryService {
    * Perform real health probe and stream to public.system_health
    */
   async captureAndSendHealth(): Promise<boolean> {
-    const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!this.currentShopId || !UUID_REGEX.test(this.currentShopId)) {
-      return false;
-    }
-
     const start = Date.now();
     let dbStatus: 'healthy' | 'degraded' | 'unreachable' = 'healthy';
     let latencyMs = 0;
@@ -153,10 +155,11 @@ class TelemetryService {
     }
 
     const devId = await this.getDeviceId();
+    const safeShopId = this.isValidUUID(this.currentShopId) ? this.currentShopId : null;
 
     // 1. Mobile App Client Component Health
     const appHealthPayload: SystemHealthPayload = {
-      shop_id: this.currentShopId,
+      shop_id: safeShopId,
       component: 'mobile_app',
       status: 'healthy',
       latency_ms: null,
@@ -173,20 +176,27 @@ class TelemetryService {
 
     // 2. Supabase Database Component Health
     const dbHealthPayload: SystemHealthPayload = {
-      shop_id: this.currentShopId,
+      shop_id: safeShopId,
       component: 'database',
       status: dbStatus,
       latency_ms: latencyMs,
       error_count: dbStatus === 'healthy' ? 0 : 1,
       details: {
-        endpoint: process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://scgokpcoyfewrtrwqxpu.supabase.co',
+        endpoint: process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://nqwgxkdpwpgqkezaqsrx.supabase.co',
         responseTimeMs: latencyMs,
       },
       timestamp: new Date().toISOString(),
     };
 
     try {
-      await supabase.from('system_health').insert([appHealthPayload, dbHealthPayload] as any);
+      const { error } = await supabase.from('system_health').insert([appHealthPayload, dbHealthPayload] as any);
+      if (error && (error.code === '23503' || error.message?.includes('foreign key')) && safeShopId) {
+        // Fallback retry with null shop_id
+        await supabase.from('system_health').insert([
+          { ...appHealthPayload, shop_id: null },
+          { ...dbHealthPayload, shop_id: null },
+        ] as any);
+      }
       return true;
     } catch (err) {
       console.warn('[TelemetryService] Failed to stream system health:', err);

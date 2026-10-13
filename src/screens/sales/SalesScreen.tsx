@@ -14,41 +14,72 @@ import { financialService } from '../../services/financialService';
 import { inrFromMinor, shortInrFromMinor } from '../../utils/format';
 import { PlusIcon } from '../../components/common/SvgIcons';
 import { radii, shadows } from '../../theme/spacing';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { fmt, localeFor } from '../../i18n/format';
+import { getGlass } from '../../theme/glass';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface SalesScreenProps {
+  onRefresh?: () => Promise<void>;
   bills: Bill[];
   shopName?: string;
   onOpenInvoice: (bill: Bill) => void;
   onNewBill: () => void;
+  onRestoreBill?: (billId: string) => Promise<void>;
 }
 
 export const SalesScreen = ({
+  onRefresh,
   bills,
   shopName = 'Salon',
   onOpenInvoice,
   onNewBill,
+  onRestoreBill,
 }: SalesScreenProps) => {
+  const pullRefresh = usePullRefresh(onRefresh);
   const { colors } = useTheme();
-  const { t } = useLanguage();
+  const glass = getGlass(colors.isDark);
+  const { t, language } = useLanguage();
+  const tf = (key: string, fallback: string, vars: Record<string, string | number> = {}) =>
+    fmt(t(key, fallback), vars);
+  const locale = localeFor(language);
   const [period, setPeriod] = useState<Period>('Day');
+  const [activeTabSub, setActiveTabSub] = useState<'active' | 'deleted'>('active');
 
-  // Deduplicate bills strictly to prevent duplicate rows in Recent Bills
-  const recentBills = React.useMemo(() => {
+  // Separate active bills vs recently deleted bills (30 days)
+  const { activeBills, deletedBills } = React.useMemo(() => {
     const seen = new Set<string>();
-    const result: Bill[] = [];
+    const active: Bill[] = [];
+    const deleted: Bill[] = [];
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+
     for (const b of bills) {
       if (!b) continue;
-      const key = b.id || b.invoice_number;
-      if (key && seen.has(key)) continue;
+      if (b.id && seen.has(b.id)) continue;
       if (b.invoice_number && seen.has(b.invoice_number)) continue;
-      if (key) seen.add(key);
+      if (b.id) seen.add(b.id);
       if (b.invoice_number) seen.add(b.invoice_number);
-      result.push(b);
+
+      if (b.status === 'deleted') {
+        const delTime = b.deleted_at
+          ? new Date(b.deleted_at).getTime()
+          : b.created_at
+          ? new Date(b.created_at).getTime()
+          : b.issued_at
+          ? new Date(b.issued_at).getTime()
+          : now;
+        if (now - delTime <= thirtyDaysMs) {
+          deleted.push(b);
+        }
+      } else {
+        active.push(b);
+      }
     }
-    return result;
+    return { activeBills: active, deletedBills: deleted };
   }, [bills]);
 
-  const metrics = financialService.getSalesMetrics(period, recentBills);
+  const metrics = financialService.getSalesMetrics(period, activeBills);
   const deltaPct =
     metrics.prev_minor > 0
       ? Math.round((Math.abs(metrics.total_minor - metrics.prev_minor) / metrics.prev_minor) * 100)
@@ -56,9 +87,60 @@ export const SalesScreen = ({
   const isUp = metrics.total_minor >= metrics.prev_minor;
   const deltaLabel = metrics.prev_minor > 0
     ? `${isUp ? '▲ ' : '▼ '}${deltaPct}% ${t('vsLast', 'vs last')} ${t(period.toLowerCase(), period)}`
-    : '0% change';
+    : t('slNoChange', '0% change');
 
-  const todayHeaderStr = new Date().toLocaleDateString('en-US', {
+  const now = new Date();
+  const subLabelText =
+    period === 'Day'
+      ? tf('slSubDay', '{today} ({date}) vs yesterday', {
+          today: t('today', 'Today'),
+          date: now.toLocaleDateString(locale, { day: 'numeric', month: 'short' }),
+        })
+      : period === 'Week'
+      ? t('slSubWeek', 'Last 7 days (including Today) vs prior week')
+      : tf('slSubMonth', '{month} (up to Today) vs last month', {
+          month: now.toLocaleString(locale, { month: 'long' }),
+        });
+  const barLabel = (label: string): string => {
+    const wk = label.match(/^W(\d+) \(Now\)$/);
+    if (wk) return tf('slWeekNow', 'W{n} (Now)', { n: wk[1] });
+    if (label === 'Today') return t('today', 'Today');
+    return label;
+  };
+  const topServiceText = (() => {
+    const sold = metrics.top_service.match(/^(.*) · (\d+) sold$/);
+    if (sold) return tf('slSold', '{name} · {n} sold', { name: sold[1], n: sold[2] });
+    if (metrics.top_service === 'No services yet') return t('slNoServices', 'No services yet');
+    return metrics.top_service;
+  })();
+  const modeLabel = (label: string): string =>
+    label === 'UPI' ? t('upi', 'UPI') : label === 'Cash' ? t('cash', 'Cash') : label === 'Card' ? t('card', 'Card') : label;
+
+  // Local calendar day of a bill (YYYY-MM-DD), '' when the bill has no usable date
+  const billDayKey = (b: Bill): string => {
+    const d = new Date(b.created_at || '');
+    if (isNaN(d.getTime())) return '';
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+
+  const dayHeadingLabel = (key: string): string => {
+    const [y, m, d] = key.split('-').map(Number);
+    const date = new Date(y, m - 1, d);
+    const sameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const today = new Date();
+    const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+    if (sameDay(date, today)) return t('today', 'Today');
+    if (sameDay(date, yesterday)) return t('slYesterday', 'Yesterday');
+    return date.toLocaleDateString(locale, {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      ...(date.getFullYear() !== today.getFullYear() ? { year: 'numeric' as const } : {}),
+    });
+  };
+
+  const todayHeaderStr =new Date().toLocaleDateString(locale, {
     weekday: 'short',
     day: 'numeric',
     month: 'short',
@@ -66,6 +148,7 @@ export const SalesScreen = ({
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       {/* Top Header */}
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
@@ -76,7 +159,7 @@ export const SalesScreen = ({
         </View>
 
         {/* Period Selector Tabs */}
-        <View style={[styles.periodTabsRow, { borderColor: colors.divider }]}>
+        <View style={[styles.periodTabsRow, { borderColor: glass.card.borderColor, backgroundColor: glass.card.backgroundColor }]}>
           {(['Day', 'Week', 'Month'] as const).map((p) => {
             const isSelected = period === p;
             return (
@@ -87,9 +170,7 @@ export const SalesScreen = ({
                 style={[
                   styles.periodTab,
                   {
-                    backgroundColor: isSelected ? colors.accent900 : 'transparent',
-                    borderWidth: isSelected ? 1 : 0,
-                    borderColor: isSelected ? colors.accent : 'transparent',
+                    backgroundColor: isSelected ? colors.accent : 'transparent',
                   },
                 ]}
               >
@@ -97,11 +178,12 @@ export const SalesScreen = ({
                   style={[
                     styles.periodTabText,
                     {
-                      color: isSelected ? colors.accent : colors.textMuted,
+                      color: isSelected ? '#161826' : colors.textMuted,
+                      fontWeight: isSelected ? '700' : '500',
                     },
                   ]}
                 >
-                  {t(p.toLowerCase(), p)}
+                  {p === 'Day' ? t('today', 'Today') : t(p.toLowerCase(), p)}
                 </Text>
               </TouchableOpacity>
             );
@@ -109,23 +191,29 @@ export const SalesScreen = ({
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} refreshControl={pullRefresh}>
+        <View style={[styles.heroCard, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
         {/* Total & Delta */}
         <View style={styles.totalRow}>
           <Text style={[styles.totalAmount, { color: colors.text }]}>
             {inrFromMinor(metrics.total_minor)}
           </Text>
-          <Text
+          <View
             style={[
-              styles.deltaText,
-              { color: isUp ? colors.accent : colors.neutral400 },
+              styles.deltaPill,
+              {
+                backgroundColor: isUp ? colors.accent + '22' : glass.pill.backgroundColor,
+                borderColor: isUp ? colors.accent + '66' : glass.card.borderColor,
+              },
             ]}
           >
-            {deltaLabel}
-          </Text>
+            <Text style={[styles.deltaText, { color: isUp ? colors.accent : colors.neutral400 }]}>
+              {deltaLabel}
+            </Text>
+          </View>
         </View>
         <Text style={[styles.subLabel, { color: colors.textDim }]}>
-          {metrics.sub_label}
+          {subLabelText}
         </Text>
 
         {/* Bar Chart */}
@@ -144,7 +232,7 @@ export const SalesScreen = ({
                         ? colors.accent
                         : isTodayOrNow
                         ? colors.accent800
-                        : 'rgba(255,255,255,0.08)',
+                        : colors.trackBg,
                     },
                   ]}
                 />
@@ -157,27 +245,28 @@ export const SalesScreen = ({
                     },
                   ]}
                 >
-                  {bar.label}
+                  {barLabel(bar.label)}
                 </Text>
               </View>
             );
           })}
         </View>
+        </View>
 
         {/* 2-Column Info Grid */}
         <View style={styles.metricsGrid}>
           {/* Collected via */}
-          <View style={[styles.metricCard, { backgroundColor: colors.surface }]}>
+          <View style={[styles.metricCard, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
             <Text style={[styles.metricCardLabel, { color: colors.textDim }]}>
-              COLLECTED VIA
+              {t('slCollectedVia', 'COLLECTED VIA')}
             </Text>
             {metrics.modes.map((m, idx) => (
               <View key={idx} style={styles.modeRow}>
-                <Text style={[styles.modeLabel, { color: colors.text }]}>{m.label}</Text>
+                <Text style={[styles.modeLabel, { color: colors.text }]}>{modeLabel(m.label)}</Text>
                 <View
                   style={[
                     styles.modeProgressBar,
-                    { backgroundColor: 'rgba(255,255,255,0.12)' },
+                    { backgroundColor: colors.trackBg },
                   ]}
                 >
                   <View
@@ -196,133 +285,233 @@ export const SalesScreen = ({
 
           {/* Bills count & Top service */}
           <View style={styles.metricCardColumn}>
-            <View style={[styles.metricCardSmall, { backgroundColor: colors.surface }]}>
+            <View style={[styles.metricCardSmall, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
               <Text style={[styles.metricCardLabel, { color: colors.textDim }]}>
-                BILLS
+                {t('slBills', 'BILLS')}
               </Text>
               <Text style={[styles.billsCountText, { color: colors.text }]}>
                 {metrics.bills_count}
               </Text>
               <Text style={[styles.avgBillText, { color: colors.textDim }]}>
-                avg {inrFromMinor(metrics.avg_bill_minor)}
+                {tf('slAvg', 'avg {x}', { x: inrFromMinor(metrics.avg_bill_minor) })}
               </Text>
             </View>
 
-            <View style={[styles.metricCardSmall, { backgroundColor: colors.surface }]}>
+            <View style={[styles.metricCardSmall, { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor }]}>
               <Text style={[styles.metricCardLabel, { color: colors.textDim }]}>
-                TOP SERVICE
+                {t('slTopService', 'TOP SERVICE')}
               </Text>
               <Text
                 numberOfLines={1}
                 style={[styles.topServiceText, { color: colors.text }]}
               >
-                {metrics.top_service}
+                {topServiceText}
               </Text>
             </View>
           </View>
         </View>
 
-        {/* Bills list */}
-        <View style={styles.billsListHeader}>
-          <Text style={[styles.billsListTitle, { color: colors.accent }]}>
-            {t('recentBills', 'Recent Bills')}
-          </Text>
+        {/* Bills list header with Tabs */}
+        <View style={[styles.billsListHeader, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 6 }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => setActiveTabSub('active')}
+              activeOpacity={0.8}
+              style={{
+                paddingVertical: 5,
+                paddingHorizontal: 10,
+                borderRadius: radii.pill,
+                backgroundColor: activeTabSub === 'active' ? colors.accent + '22' : glass.pill.backgroundColor,
+                borderWidth: 1,
+                borderColor: activeTabSub === 'active' ? colors.accent : glass.card.borderColor,
+              }}
+            >
+              <Text style={{ color: activeTabSub === 'active' ? colors.accent : colors.textDim, fontWeight: '600', fontSize: 13 }}>
+                {tf('slRecentBills', 'Recent Bills ({n})', { n: activeBills.length })}
+              </Text>
+            </TouchableOpacity>
+
+            {deletedBills.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setActiveTabSub('deleted')}
+                activeOpacity={0.8}
+                style={{
+                  paddingVertical: 5,
+                  paddingHorizontal: 10,
+                  borderRadius: radii.pill,
+                  backgroundColor: activeTabSub === 'deleted' ? 'rgba(239,68,68,0.15)' : glass.pill.backgroundColor,
+                  borderWidth: 1,
+                  borderColor: activeTabSub === 'deleted' ? '#EF4444' : glass.card.borderColor,
+                }}
+              >
+                <Text style={{ color: activeTabSub === 'deleted' ? '#EF4444' : colors.textDim, fontWeight: '600', fontSize: 13 }}>
+                  {tf('slDeletedBills', 'Recently Deleted ({n})', { n: deletedBills.length })}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
           <Text style={[styles.billsListSub, { color: colors.textSubtle }]}>
-            tap to view invoice
+            {t('slTapToView', 'tap to view')}
           </Text>
         </View>
 
         <View style={styles.billsList}>
-          {recentBills.length === 0 ? (
-            <View style={styles.emptyBillsBox}>
-              <Text style={[styles.emptyBillsTitle, { color: colors.text }]}>
-                {t('noBillsYet', 'No bills recorded yet')}
-              </Text>
-              <Text style={[styles.emptyBillsSub, { color: colors.textDim }]}>
-                {t('tapNewBill', 'Tap "+ New bill" below to record your first client service and payment.')}
-              </Text>
-            </View>
-          ) : (
-            recentBills.map((b) => {
-              const isPartiallyPaid = b.status === 'partially_paid';
-              const isPending = b.status === 'pending';
-              const dueMinor = b.due_amount_minor ?? (isPending ? b.total_minor : 0);
-              const paidMinor = b.paid_amount_minor ?? (isPending ? 0 : Math.max(0, b.total_minor - dueMinor));
-              const isDueBill = b.notes?.includes('due') || b.invoice_number?.startsWith('DUE');
-              const whatText =
-                b.items && b.items.length > 0
-                  ? b.items.map((it) => it.service_name_snapshot).join(', ')
-                  : isDueBill
-                  ? 'Opening Due / Settlement'
-                  : 'Salon Service';
-
-              return (
-                <TouchableOpacity
+          {activeTabSub === 'deleted' ? (
+            deletedBills.length === 0 ? (
+              <View style={styles.emptyBillsBox}>
+                <Text style={[styles.emptyBillsTitle, { color: colors.text }]}>
+                  {t('slNoDeleted', 'No recently deleted bills')}
+                </Text>
+                <Text style={[styles.emptyBillsSub, { color: colors.textDim }]}>
+                  {t('slNoDeletedSub', 'Bills deleted in the last 30 days will appear here.')}
+                </Text>
+              </View>
+            ) : (
+              deletedBills.map((b) => (
+                <View
                   key={b.id || b.invoice_number}
-                  activeOpacity={0.7}
-                  onPress={() => onOpenInvoice(b)}
                   style={[
                     styles.billRow,
-                    { borderBottomColor: colors.divider },
+                    { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor, opacity: 0.85, alignItems: 'center' },
                   ]}
                 >
-                  <Text style={[styles.billTime, { color: colors.textDim }]}>
-                    {b.issued_at}
-                  </Text>
-                  <View style={styles.billMain}>
-                    <Text style={[styles.billCust, { color: colors.text, fontWeight: '600' }]}>
-                      {b.customer_name}
-                    </Text>
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.billWhat, { color: colors.textDim }]}
-                    >
-                      {whatText} · {b.staff_name || 'Staff'}
-                    </Text>
-                  </View>
-                  <View style={styles.billRight}>
-                    <Text style={[styles.billAmt, { color: colors.text, fontWeight: '700' }]}>
-                      {inrFromMinor(b.total_minor)}
-                    </Text>
-                    {isPartiallyPaid ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                        <Text style={{ fontSize: 10, color: '#16a34a', fontWeight: '600' }}>
-                          Paid {inrFromMinor(paidMinor)}
-                        </Text>
-                        <Text style={{ fontSize: 10, color: '#f59e0b', fontWeight: '600' }}>
-                          · Due {inrFromMinor(dueMinor)}
-                        </Text>
-                        <View style={{ backgroundColor: '#fef3c7', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
-                          <Text style={{ fontSize: 9, color: '#b45309', fontWeight: '700' }}>PARTIAL</Text>
-                        </View>
-                      </View>
-                    ) : isPending ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                        <Text style={{ fontSize: 10, color: '#ef4444', fontWeight: '600' }}>
-                          Due {inrFromMinor(dueMinor)}
-                        </Text>
-                        <View style={{ backgroundColor: '#fee2e2', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
-                          <Text style={{ fontSize: 9, color: '#991b1b', fontWeight: '700' }}>DUE</Text>
-                        </View>
-                      </View>
-                    ) : isDueBill ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                        <Text style={{ fontSize: 10, color: '#16a34a', fontWeight: '600' }}>
-                          Due Settled
-                        </Text>
-                        <View style={{ backgroundColor: '#dcfce7', paddingHorizontal: 4, paddingVertical: 1, borderRadius: 4 }}>
-                          <Text style={{ fontSize: 9, color: '#166534', fontWeight: '700' }}>PAID</Text>
-                        </View>
-                      </View>
-                    ) : (
-                      <Text style={[styles.billMode, { color: colors.textDim }]}>
-                        {b.payment_method}
+                  <TouchableOpacity
+                    style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                    activeOpacity={0.7}
+                    onPress={() => onOpenInvoice(b)}
+                  >
+                    <View style={styles.billMain}>
+                      <Text numberOfLines={1} style={[styles.billTime, { color: colors.textDim }]}>
+                        {b.issued_at}
                       </Text>
-                    )}
-                  </View>
-                </TouchableOpacity>
-              );
-            })
+                      <Text style={[styles.billCust, { color: colors.text, fontWeight: '600' }]}>
+                        {b.customer_name}
+                      </Text>
+                      <Text numberOfLines={1} style={[styles.billWhat, { color: '#EF4444' }]}>
+                        {tf('slDeletedBy', 'Deleted by {who}', {
+                          who: `${b.deleted_by || 'Owner'}${b.deleted_by_role ? ` (${b.deleted_by_role === 'stylist' ? 'Stylist' : 'Owner'})` : ''}`,
+                        })} · #{b.invoice_number}
+                      </Text>
+                    </View>
+                    <View style={styles.billRight}>
+                      <Text style={[styles.billAmt, { color: colors.text, fontWeight: '700' }]}>
+                        {inrFromMinor(b.total_minor)}
+                      </Text>
+                      <Text style={{ fontSize: 10, color: '#EF4444', fontWeight: '600', marginTop: 2 }}>
+                        {t('slDeletedTag', 'DELETED')}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  {onRestoreBill && (
+                    <TouchableOpacity
+                      onPress={() => onRestoreBill(b.id)}
+                      activeOpacity={0.8}
+                      style={{ marginLeft: 12, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radii.sm, backgroundColor: '#22C55E' }}
+                    >
+                      <Text style={{ color: '#FFFFFF', fontSize: 11, fontWeight: '600' }}>{t('restore', 'Restore')}</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))
+            )
+          ) : (
+            activeBills.length === 0 ? (
+              <View style={styles.emptyBillsBox}>
+                <Text style={[styles.emptyBillsTitle, { color: colors.text }]}>
+                  {t('noBillsYet', 'No bills recorded yet')}
+                </Text>
+                <Text style={[styles.emptyBillsSub, { color: colors.textDim }]}>
+                  {t('tapNewBill', 'Tap "+ New bill" below to record your first client service and payment.')}
+                </Text>
+              </View>
+            ) : (
+              activeBills.map((b, index) => {
+                const dayKey = billDayKey(b);
+                const showDayHeading = dayKey !== '' && (index === 0 || dayKey !== billDayKey(activeBills[index - 1]));
+                const isPartiallyPaid = b.status === 'partially_paid';
+                const isPending = b.status === 'pending';
+                const dueMinor = b.due_amount_minor ?? (isPending ? b.total_minor : 0);
+                const paidMinor = b.paid_amount_minor ?? (isPending ? 0 : Math.max(0, b.total_minor - dueMinor));
+                const isDueBill = b.notes?.includes('due') || b.invoice_number?.startsWith('DUE');
+                const whatText =
+                  b.items && b.items.length > 0
+                    ? b.items.map((it) => it.service_name_snapshot).join(', ')
+                    : isDueBill
+                    ? t('slOpeningDue', 'Opening Due / Settlement')
+                    : t('slSalon', 'Salon Service');
+
+                return (
+                  <React.Fragment key={b.id || b.invoice_number}>
+                  {showDayHeading && (
+                    <Text style={[styles.dayHeading, { color: colors.textDim }, index > 0 && { marginTop: 10 }]}>
+                      {dayHeadingLabel(dayKey)}
+                    </Text>
+                  )}
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={() => onOpenInvoice(b)}
+                    style={[
+                      styles.billRow,
+                      { backgroundColor: glass.card.backgroundColor, borderColor: glass.card.borderColor },
+                    ]}
+                  >
+                    <View style={styles.billMain}>
+                      <Text numberOfLines={1} style={[styles.billTime, { color: colors.textDim }]}>
+                        {b.issued_at}
+                      </Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.billCust, { color: colors.text, fontWeight: '600', flexShrink: 1 }]}>
+                          {b.customer_name}
+                        </Text>
+                        {(b.is_edited || b.notes?.includes('[Edited]')) && (
+                          <View style={{ flexShrink: 0, backgroundColor: 'rgba(217, 164, 65, 0.18)', paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6, borderWidth: 1, borderColor: colors.accent }}>
+                            <Text numberOfLines={1} style={{ fontSize: 9.5, color: colors.accent, fontWeight: '700' }}>
+                              {t('edited', 'Edited')}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text
+                        numberOfLines={1}
+                        style={[styles.billWhat, { color: colors.textDim }]}
+                      >
+                        {whatText} · {b.staff_name || 'Staff'}
+                      </Text>
+                    </View>
+                    <View style={styles.billRight}>
+                      <Text style={[styles.billAmt, { color: colors.text, fontWeight: '700' }]}>
+                        {inrFromMinor(b.total_minor)}
+                      </Text>
+                      {isPartiallyPaid ? (
+                        <View style={{ alignItems: 'flex-end' }}>
+                          <Text numberOfLines={1} style={{ fontSize: 10.5, color: '#16a34a', fontWeight: '600', marginTop: 2 }}>
+                            {tf('slPaid', 'Paid {x}', { x: inrFromMinor(paidMinor) })}
+                          </Text>
+                          <View style={{ backgroundColor: 'rgba(245, 158, 11, 0.16)', borderWidth: 1, borderColor: 'rgba(245, 158, 11, 0.45)', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, marginTop: 3 }}>
+                          <Text numberOfLines={1} style={{ fontSize: 10, color: '#f59e0b', fontWeight: '700' }}>{tf('slDue', 'Due {x}', { x: inrFromMinor(dueMinor) })}</Text>
+                        </View>
+                        </View>
+                      ) : isPending ? (
+                        <View style={{ backgroundColor: 'rgba(239, 68, 68, 0.14)', borderWidth: 1, borderColor: 'rgba(239, 68, 68, 0.45)', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, marginTop: 3 }}>
+                          <Text numberOfLines={1} style={{ fontSize: 10, color: '#ef4444', fontWeight: '700' }}>{tf('slDue', 'Due {x}', { x: inrFromMinor(dueMinor) })}</Text>
+                        </View>
+                      ) : isDueBill ? (
+                        <View style={{ backgroundColor: 'rgba(34, 197, 94, 0.14)', borderWidth: 1, borderColor: 'rgba(34, 197, 94, 0.45)', paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8, marginTop: 3 }}>
+                          <Text numberOfLines={1} style={{ fontSize: 10, color: '#22c55e', fontWeight: '700' }}>{t('slDueSettled', 'Due Settled')}</Text>
+                        </View>
+                      ) : (
+                        <Text style={[styles.billMode, { color: colors.textDim }]}>
+                          {b.payment_method}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                  </React.Fragment>
+                );
+              })
+            )
           )}
         </View>
       </ScrollView>
@@ -334,13 +523,13 @@ export const SalesScreen = ({
         style={[
           styles.fab,
           {
-            backgroundColor: colors.accent800,
+            backgroundColor: colors.accent,
             borderColor: colors.accent,
           },
         ]}
       >
-        <PlusIcon size={18} color={colors.accent100} />
-        <Text style={[styles.fabText, { color: colors.accent100 }]}>
+        <PlusIcon size={18} color="#161826" />
+        <Text style={[styles.fabText, { color: '#161826' }]}>
           {t('newBill', 'New bill')}
         </Text>
       </TouchableOpacity>
@@ -349,6 +538,13 @@ export const SalesScreen = ({
 };
 
 const styles = StyleSheet.create({
+  dayHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+    paddingHorizontal: 2,
+  },
   safeArea: {
     flex: 1,
   },
@@ -375,14 +571,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: 12,
     borderWidth: 1,
-    borderRadius: radii.md,
-    overflow: 'hidden',
+    borderRadius: 14,
+    padding: 3,
+    gap: 3,
   },
   periodTab: {
     flex: 1,
     paddingVertical: 8,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  heroCard: {
+    borderWidth: 1,
+    borderRadius: 20,
+    padding: 14,
+  },
+  deltaPill: {
+    flexShrink: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 4,
   },
   periodTabText: {
     fontSize: 12.5,
@@ -395,17 +606,18 @@ const styles = StyleSheet.create({
   },
   totalRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'flex-end',
-    gap: 10,
+    gap: 6,
   },
   totalAmount: {
     fontSize: 34,
-    fontWeight: '500',
+    fontWeight: '700',
     letterSpacing: -0.6,
   },
   deltaText: {
-    fontSize: 12,
-    paddingBottom: 4,
+    fontSize: 11.5,
+    fontWeight: '600',
   },
   subLabel: {
     fontSize: 12,
@@ -440,16 +652,18 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     flex: 1,
-    padding: 11,
-    borderRadius: radii.md,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
   },
   metricCardColumn: {
     flex: 1,
     gap: 8,
   },
   metricCardSmall: {
-    padding: 11,
-    borderRadius: radii.md,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1,
   },
   metricCardLabel: {
     fontSize: 9.5,
@@ -496,7 +710,7 @@ const styles = StyleSheet.create({
   billsListHeader: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    marginBottom: 4,
+    marginBottom: 10,
   },
   billsListTitle: {
     fontSize: 10,
@@ -512,12 +726,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 11,
-    paddingVertical: 11,
-    borderBottomWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderRadius: 14,
+    marginBottom: 8,
   },
   billTime: {
-    width: 44,
     fontSize: 11,
+    marginBottom: 2,
   },
   billMain: {
     flex: 1,
@@ -532,6 +749,8 @@ const styles = StyleSheet.create({
   },
   billRight: {
     alignItems: 'flex-end',
+    maxWidth: '44%',
+    flexShrink: 0,
   },
   billAmt: {
     fontSize: 14,
@@ -544,9 +763,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 18,
     bottom: 24,
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 18,
-    borderRadius: 14,
+    borderRadius: 24,
     borderWidth: 1,
     flexDirection: 'row',
     alignItems: 'center',
@@ -555,7 +774,7 @@ const styles = StyleSheet.create({
   },
   fabText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
   },
   emptyBillsBox: {
     paddingVertical: 32,

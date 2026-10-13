@@ -21,6 +21,17 @@ export class AuthService {
     return authRepository.verifyOtp(phone, otp, sessionId);
   }
 
+  async verifyOtpCodeOnly(
+    phone: string,
+    otp: string,
+    sessionId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    if (otp.length !== 6) {
+      return { success: false, error: 'Enter the complete 6-digit code' };
+    }
+    return authRepository.verifyOtpCodeOnly(phone, otp, sessionId);
+  }
+
   async registerShop(
     userId: string,
     data: ShopRegistrationData

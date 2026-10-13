@@ -1,6 +1,10 @@
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Database } from '../types/database';
+import { DEFAULT_ACCENT } from '../theme/colors';
+import { logoStorageService } from '../services/logoStorageService';
+import { generateInvoicePrefixFromShopName, sanitizeInvoicePrefix } from '../utils/invoicePrefix';
+import { assertSaved, isRemoteShop } from '../utils/persist';
 
 export type ShopRow = Database['public']['Tables']['shops']['Row'];
 
@@ -18,26 +22,68 @@ export interface ShopRegistrationData {
   phone?: string;
   accentColor?: string;
   logoPath?: string;
+  invoicePrefix?: string;
 }
 
 export class ShopRepository {
+  async enrichShopRow(shop: ShopRow | null): Promise<ShopRow | null> {
+    if (!shop) return null;
+    let upi = (shop as any).upi_id || (shop.social_links as any)?.upi_id || null;
+    if (!upi && shop.id) {
+      try {
+        upi = await AsyncStorage.getItem(`@salon_os_upi_id_${shop.id}`);
+      } catch {
+        // ignore
+      }
+    }
+
+    let prefix = (shop as any).invoice_prefix || (shop.social_links as any)?.invoice_prefix || null;
+    if ((!prefix || prefix === 'INV-') && shop.id) {
+      try {
+        const cachedPref = await AsyncStorage.getItem(`@salon_os_invoice_prefix_${shop.id}`);
+        if (cachedPref) prefix = cachedPref;
+      } catch {
+        // ignore
+      }
+    }
+    if (!prefix || prefix === 'INV-') {
+      prefix = generateInvoicePrefixFromShopName(shop.name);
+    }
+
+    return { ...shop, upi_id: upi, invoice_prefix: prefix };
+  }
+
   async getShopById(shopId: string): Promise<ShopRow | null> {
     try {
       const { data, error } = await supabase
         .from('shops')
         .select('*')
         .eq('id', shopId)
-        .single();
+        .maybeSingle();
 
       if (!error && data) {
-        await this.cacheShop(data as ShopRow);
-        return data as ShopRow;
+        const enriched = await this.enrichShopRow(data as ShopRow);
+        if (enriched) {
+          await this.cacheShop(enriched);
+          return enriched;
+        }
+      }
+
+      // If query succeeded and returned no row, the shop definitely does not exist in remote DB
+      if (!error && !data) {
+        return null;
+      }
+
+      // If error indicates 0 rows found
+      if (error && (error.code === 'PGRST116' || error.message?.includes('0 rows'))) {
+        return null;
       }
     } catch {
-      // Fallback to cache
+      // Network failure / offline: fallback to cache
+      return this.getCachedShop();
     }
 
-    return this.getCachedShop();
+    return null;
   }
 
   async getShopForUser(userId: string): Promise<ShopRow | null> {
@@ -80,10 +126,13 @@ export class ShopRepository {
     if (!clean) return null;
 
     try {
-      const { data, error } = await supabase
-        .from('shops')
-        .select('*')
-        .or(`phone.eq.${clean},phone.eq.+91${clean},phone.eq.91${clean}`)
+      const selectBuilder = supabase.from('shops').select('*');
+      const filteredBuilder =
+        typeof (selectBuilder as any).or === 'function'
+          ? (selectBuilder as any).or(`phone.ilike.%${clean}%,phone.eq.${clean}`)
+          : selectBuilder.eq('phone', clean);
+
+      const { data, error } = await filteredBuilder
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -101,6 +150,24 @@ export class ShopRepository {
     ownerUserId: string,
     data: ShopRegistrationData
   ): Promise<ShopRow> {
+    // Process local logo to universal cloud/data URI if needed
+    let processedLogo: string | null = data.logoPath || null;
+    if (processedLogo && (processedLogo.startsWith('file://') || processedLogo.startsWith('content://'))) {
+      try {
+        const uploaded = await logoStorageService.processAndUploadLogo(ownerUserId || 'new_shop', processedLogo);
+        if (uploaded) {
+          processedLogo = uploaded;
+        }
+      } catch (lErr) {
+        console.warn('Notice: Logo processing warning:', lErr);
+      }
+    }
+
+    // Auto-generate invoice prefix based on salon name
+    const autoPrefix = sanitizeInvoicePrefix(
+      data.invoicePrefix || generateInvoicePrefixFromShopName(data.name)
+    );
+
     // 1. Try calling the register_salon RPC function (bypasses RLS with SECURITY DEFINER)
     try {
       const { data: rpcShop, error: rpcError } = await supabase.rpc('register_salon', {
@@ -111,12 +178,19 @@ export class ShopRepository {
         p_city: data.city,
         p_pin_code: data.pinCode,
         p_gstin: data.gstin || null,
-        p_logo_path: data.logoPath || null,
-        p_accent_color: data.accentColor || '#D9A441',
+        p_logo_path: processedLogo,
+        p_accent_color: data.accentColor || DEFAULT_ACCENT,
       });
 
       if (!rpcError && rpcShop) {
         const row = rpcShop as ShopRow;
+        try {
+          await this.updateShop(row.id, { invoice_prefix: autoPrefix });
+          row.invoice_prefix = autoPrefix;
+          await AsyncStorage.setItem(`@salon_os_invoice_prefix_${row.id}`, autoPrefix);
+        } catch {
+          // ignore
+        }
         await this.cacheShop(row);
         return row;
       }
@@ -155,15 +229,15 @@ export class ShopRepository {
     // 4. Insert salon row into Supabase public.shops
     const insertPayload: any = {
       name: data.name,
-      logo_path: data.logoPath || null,
+      logo_path: processedLogo || null,
       address: data.address,
       city: data.city,
       pin_code: data.pinCode,
       gstin: data.gstin || null,
       phone: data.phone || null,
-      accent_color: data.accentColor || '#D9A441',
-      invoice_prefix: 'INV-',
-      gst_rate: 18.00,
+      accent_color: data.accentColor || DEFAULT_ACCENT,
+      invoice_prefix: autoPrefix,
+      gst_rate: 0.00,
     };
 
     if (isRealUuid && validOwnerId) {
@@ -226,27 +300,112 @@ export class ShopRepository {
       await this.saveOwnerName(owner_name, ownerProfileId);
     }
 
-    try {
-      const { data, error } = await supabase
+    if (shopUpdates.logo_path) {
+      try {
+        const universalLogo = await logoStorageService.processAndUploadLogo(shopId, shopUpdates.logo_path);
+        shopUpdates.logo_path = universalLogo;
+      } catch (err) {
+        if (isRemoteShop(shopId)) {
+          throw new Error('The logo could not be uploaded, so it was not saved. Please check your connection and try again.');
+        }
+        console.warn('Logo processing notice:', err);
+      }
+    }
+
+    // Phone-side copies change only after the server accepted the save
+    const localWrites: (() => Promise<void>)[] = [];
+
+    if (updates.upi_id !== undefined) {
+      const cached = await this.getCachedShop();
+      const existingSocial = (cached?.social_links as any) || {};
+      shopUpdates.social_links = {
+        ...existingSocial,
+        ...(shopUpdates.social_links || {}),
+        upi_id: updates.upi_id,
+      };
+      if (shopId) {
+        localWrites.push(async () => {
+          try {
+            if (updates.upi_id) {
+              await AsyncStorage.setItem(`@salon_os_upi_id_${shopId}`, updates.upi_id);
+            } else {
+              await AsyncStorage.removeItem(`@salon_os_upi_id_${shopId}`);
+            }
+          } catch {
+            // ignore
+          }
+        });
+      }
+    }
+
+    if (updates.invoice_prefix !== undefined) {
+      const cleanPrefix = sanitizeInvoicePrefix(updates.invoice_prefix);
+      shopUpdates.invoice_prefix = cleanPrefix;
+      const cached = await this.getCachedShop();
+      const existingSocial = (cached?.social_links as any) || {};
+      shopUpdates.social_links = {
+        ...existingSocial,
+        ...(shopUpdates.social_links || {}),
+        invoice_prefix: cleanPrefix,
+      };
+      if (shopId) {
+        localWrites.push(async () => {
+          try {
+            await AsyncStorage.setItem(`@salon_os_invoice_prefix_${shopId}`, cleanPrefix);
+          } catch {
+            // ignore
+          }
+        });
+      }
+    }
+
+    let savedData: ShopRow | null = null;
+
+    if (isRemoteShop(shopId)) {
+      const first = await supabase
         .from('shops')
         .update(shopUpdates as any)
         .eq('id', shopId)
         .select()
         .single();
 
-      if (!error && data) {
-        await this.cacheShop(data as ShopRow);
-        return data as ShopRow;
+      if (!first.error && first.data) {
+        savedData = first.data as ShopRow;
+      } else if (first.error && ((shopUpdates as any).upi_id !== undefined || (shopUpdates as any).invoice_prefix !== undefined)) {
+        // Fallback: if top-level column is awaiting DB migration, update without it
+        // The values are already safely mirrored in social_links above!
+        const { upi_id, invoice_prefix, ...fallbackUpdates } = shopUpdates as any;
+        const fallback = await supabase
+          .from('shops')
+          .update(fallbackUpdates as any)
+          .eq('id', shopId)
+          .select()
+          .single();
+        assertSaved(fallback, 'the shop details');
+        savedData = (fallback.data as ShopRow | null) ?? null;
+      } else {
+        assertSaved(first, 'the shop details');
       }
-    } catch {
-      // ignore
+
+      if (!savedData) {
+        throw new Error('The shop was not found on the server, so the changes were not saved.');
+      }
+    }
+
+    for (const write of localWrites) await write();
+
+    if (savedData) {
+      const enriched = await this.enrichShopRow(savedData);
+      if (enriched) await this.cacheShop(enriched);
+      return enriched;
     }
 
     const cached = await this.getCachedShop();
     if (cached && cached.id === shopId) {
       const updated = { ...cached, ...shopUpdates };
-      await this.cacheShop(updated);
-      return updated;
+      const enriched = await this.enrichShopRow(updated as ShopRow);
+      if (enriched) await this.cacheShop(enriched);
+      return enriched;
     }
     return null;
   }
@@ -313,7 +472,10 @@ export class ShopRepository {
   async getCachedShop(): Promise<ShopRow | null> {
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEY_SHOP_CACHE);
-      if (data) return JSON.parse(data);
+      if (data) {
+        const parsed = JSON.parse(data);
+        return await this.enrichShopRow(parsed);
+      }
     } catch {
       // ignore
     }
@@ -339,6 +501,160 @@ export class ShopRepository {
     } catch {
       return null;
     }
+  }
+
+  async getBookingHours(shopId?: string): Promise<{ startTime: string; endTime: string }> {
+    const defaultHours = { startTime: '09:30 AM', endTime: '08:30 PM' };
+    try {
+      const storageKey = shopId ? `@salon_os_booking_hours_${shopId}` : '@salon_os_booking_hours';
+      const raw = await AsyncStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.startTime && parsed.endTime) {
+          return parsed;
+        }
+      }
+
+      const globalRaw = await AsyncStorage.getItem('@salon_os_booking_hours');
+      if (globalRaw) {
+        const parsed = JSON.parse(globalRaw);
+        if (parsed.startTime && parsed.endTime) {
+          return parsed;
+        }
+      }
+
+      const cachedShop = await this.getCachedShop();
+      const meta = (cachedShop as any)?.social_links;
+      if (meta?.booking_start_time && meta?.booking_end_time) {
+        return {
+          startTime: meta.booking_start_time,
+          endTime: meta.booking_end_time,
+        };
+      }
+    } catch {
+      // fallback
+    }
+    return defaultHours;
+  }
+
+  async saveBookingHours(shopId: string, startTime: string, endTime: string): Promise<void> {
+    const hours = { startTime: startTime.trim(), endTime: endTime.trim() };
+    if (shopId) {
+      const cachedShop = await this.getCachedShop();
+      const existingLinks = (cachedShop as any)?.social_links || {};
+      const updatedLinks = {
+        ...existingLinks,
+        booking_start_time: hours.startTime,
+        booking_end_time: hours.endTime,
+      };
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      await this.updateShop(shopId, { social_links: updatedLinks } as any);
+    }
+    try {
+      const storageKey = shopId ? `@salon_os_booking_hours_${shopId}` : '@salon_os_booking_hours';
+      await AsyncStorage.setItem(storageKey, JSON.stringify(hours));
+      await AsyncStorage.setItem('@salon_os_booking_hours', JSON.stringify(hours));
+    } catch (err) {
+      console.warn('saveBookingHours notice:', err);
+    }
+  }
+
+  async getInvoiceNumberingMode(shopId: string): Promise<'monthly' | 'yearly'> {
+    try {
+      const storageKey = shopId ? `@salon_os_invoice_mode_${shopId}` : '@salon_os_invoice_mode';
+      const stored = await AsyncStorage.getItem(storageKey);
+      if (stored === 'monthly' || stored === 'yearly') {
+        return stored;
+      }
+      const cached = await this.getCachedShop();
+      if ((cached as any)?.invoice_numbering_mode === 'yearly') {
+        return 'yearly';
+      }
+      if ((cached as any)?.invoice_numbering_mode === 'monthly') {
+        return 'monthly';
+      }
+    } catch {
+      // fallback
+    }
+    return 'monthly'; // default per requirement
+  }
+
+  async setInvoiceNumberingMode(shopId: string, mode: 'monthly' | 'yearly'): Promise<void> {
+    if (shopId) {
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      await this.updateShop(shopId, { invoice_numbering_mode: mode } as any);
+    }
+    try {
+      const storageKey = shopId ? `@salon_os_invoice_mode_${shopId}` : '@salon_os_invoice_mode';
+      await AsyncStorage.setItem(storageKey, mode);
+      await AsyncStorage.setItem('@salon_os_invoice_mode', mode);
+    } catch (err) {
+      console.warn('setInvoiceNumberingMode notice:', err);
+    }
+  }
+
+  async getInvoicePrefix(shopId: string, shopName?: string): Promise<string> {
+    try {
+      const storageKey = shopId ? `@salon_os_invoice_prefix_${shopId}` : '@salon_os_invoice_prefix';
+      const stored = await AsyncStorage.getItem(storageKey);
+      if (stored && stored !== 'INV-') {
+        return stored;
+      }
+      const cached = await this.getCachedShop();
+      if ((cached as any)?.invoice_prefix && (cached as any).invoice_prefix !== 'INV-') {
+        return (cached as any).invoice_prefix;
+      }
+      if (shopId) {
+        const { data } = await supabase
+          .from('shops')
+          .select('name, invoice_prefix, social_links')
+          .eq('id', shopId)
+          .single();
+
+        if (data?.invoice_prefix && data.invoice_prefix !== 'INV-') {
+          await AsyncStorage.setItem(storageKey, data.invoice_prefix);
+          return data.invoice_prefix;
+        }
+        if ((data?.social_links as any)?.invoice_prefix) {
+          const p = (data?.social_links as any).invoice_prefix;
+          await AsyncStorage.setItem(storageKey, p);
+          return p;
+        }
+        if (data?.name || shopName) {
+          const auto = generateInvoicePrefixFromShopName(data?.name || shopName || '');
+          await this.setInvoicePrefix(shopId, auto);
+          return auto;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return shopName ? generateInvoicePrefixFromShopName(shopName) : 'CS';
+  }
+
+  async setInvoicePrefix(shopId: string, prefix: string): Promise<string> {
+    const cleanPrefix = sanitizeInvoicePrefix(prefix);
+    if (shopId) {
+      const cached = await this.getCachedShop();
+      const existingSocial = (cached?.social_links as any) || {};
+      const updatedSocial = {
+        ...existingSocial,
+        invoice_prefix: cleanPrefix,
+      };
+      // Saved on the server first; a rejected save throws before anything changes on the phone
+      await this.updateShop(shopId, {
+        invoice_prefix: cleanPrefix,
+        social_links: updatedSocial,
+      } as any);
+    }
+    try {
+      const storageKey = shopId ? `@salon_os_invoice_prefix_${shopId}` : '@salon_os_invoice_prefix';
+      await AsyncStorage.setItem(storageKey, cleanPrefix);
+      await AsyncStorage.setItem('@salon_os_invoice_prefix', cleanPrefix);
+    } catch (err) {
+      console.warn('setInvoicePrefix notice:', err);
+    }
+    return cleanPrefix;
   }
 }
 

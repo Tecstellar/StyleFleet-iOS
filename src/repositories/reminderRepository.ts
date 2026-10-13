@@ -1,9 +1,43 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ReminderItem } from '../types/domain';
 import { supabase } from '../lib/supabase';
+import { toLocalDateStr } from '../utils/dateUtils';
+import { assertSaved } from '../utils/persist';
 
 const STORAGE_KEY_REMINDERS = '@salon_os_reminders_cache';
 const STORAGE_KEY_RULES = '@salon_os_reminder_rules_cache';
+
+/** "2026-10-06 10:30 AM" -> { when: "Today · 10:30 AM", isToday: true }; later days read "Tomorrow · ..." or "7 Oct · ..." */
+export function describeAppointmentWhen(
+  startsAt: string,
+  now: Date = new Date(),
+  labels: { today: string; tomorrow: string; locale: string } = { today: 'Today', tomorrow: 'Tomorrow', locale: 'en-US' }
+): { when: string; time: string; isToday: boolean } {
+  const raw = startsAt || '';
+  const t12 = raw.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  const t24 = raw.match(/(?:T|\s)(\d{1,2}):(\d{2})/);
+  let time = '';
+  if (t12) {
+    time = `${t12[1].padStart(2, '0')}:${t12[2]} ${t12[3].toUpperCase()}`;
+  } else if (t24) {
+    const h = parseInt(t24[1], 10);
+    time = `${String(h % 12 === 0 ? 12 : h % 12).padStart(2, '0')}:${t24[2]} ${h >= 12 ? 'PM' : 'AM'}`;
+  }
+
+  const dm = raw.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!dm) return { when: time || labels.today, time, isToday: true };
+
+  const todayStr = toLocalDateStr(now);
+  const tomorrowStr = toLocalDateStr(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1));
+  const dateStr = `${dm[1]}-${dm[2]}-${dm[3]}`;
+  const label =
+    dateStr === todayStr
+      ? labels.today
+      : dateStr === tomorrowStr
+      ? labels.tomorrow
+      : new Date(+dm[1], +dm[2] - 1, +dm[3]).toLocaleDateString(labels.locale, { day: 'numeric', month: 'short' });
+  return { when: time ? `${label} · ${time}` : label, time, isToday: dateStr === todayStr };
+}
 
 export interface ReminderRule {
   id: string;
@@ -61,14 +95,18 @@ export class ReminderRepository {
 
       if (appts && appts.length > 0) {
         for (const a of appts) {
+          if (typeof a.notes === 'string' && a.notes.includes('"is_deleted":true')) continue;
           const custName = (a.customers as any)?.name || 'Client';
+          const when = describeAppointmentWhen(a.starts_at);
           reminders.push({
             id: `rem_appt_${a.id}`,
-            group: 'Today',
+            group: when.isToday ? 'Today' : 'Upcoming',
             kind: 'appt',
-            title: `Remind ${custName} · ${a.starts_at} appointment`,
+            customer_name: custName,
+            starts_at: a.starts_at,
+            title: `Remind ${custName} about their appointment`,
             sub: 'Send appointment confirmation and reminder',
-            when: a.starts_at,
+            when: when.when,
             action: 'Send now',
           });
         }
@@ -148,14 +186,12 @@ export class ReminderRepository {
   async dismissReminder(shopId: string, reminderId: string): Promise<void> {
     if (reminderId.startsWith('rem_support_')) {
       const answerId = reminderId.replace('rem_support_', '');
-      try {
-        await supabase
-          .from('support_message_answers')
-          .update({ is_read: true })
-          .eq('id', answerId);
-      } catch {
-        // ignore
-      }
+      const result = await supabase
+        .from('support_message_answers')
+        .update({ is_read: true })
+        .eq('id', answerId)
+        .eq('shop_id', shopId);
+      assertSaved(result, 'the reply being marked as read');
     }
 
     const current = (await this.getCachedReminders(shopId)) || [];
@@ -187,7 +223,7 @@ export class ReminderRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_REMINDERS}_${shopId}`, JSON.stringify(reminders));
   }
 
-  private async getCachedReminders(shopId: string): Promise<ReminderItem[] | null> {
+  async getCachedReminders(shopId: string): Promise<ReminderItem[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_REMINDERS}_${shopId}`);
       if (data) return JSON.parse(data);

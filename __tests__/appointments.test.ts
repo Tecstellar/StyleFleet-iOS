@@ -48,4 +48,37 @@ describe('Appointments Service and Availability', () => {
     expect(slot1200?.taken).toBe(true);
     expect(slot1000?.taken).toBe(false);
   });
+
+  it('updates and deletes appointments via appointmentRepository', async () => {
+    const { appointmentRepository } = await import('../src/repositories/appointmentRepository');
+    const shopId = 'test_shop_appt';
+
+    const created = await appointmentRepository.addAppointment({
+      shopId,
+      customerName: 'Test Client',
+      serviceName: 'Haircut',
+      stylistName: 'Stylist A',
+      slot: '11:00 AM',
+      amountRupees: 500,
+    });
+    expect(created).toBeDefined();
+    expect(created.customer_name).toBe('Test Client');
+
+    // Update appointment
+    const updated = await appointmentRepository.updateAppointment(shopId, created.id, {
+      starts_at: '11:30 AM',
+      staff_name: 'Stylist B',
+      duration_minutes: 60,
+    });
+    expect(updated).toBeDefined();
+    expect(updated?.starts_at).toBe('11:30 AM');
+    expect(updated?.staff_name).toBe('Stylist B');
+    expect(updated?.duration_minutes).toBe(60);
+
+    // Delete appointment
+    await appointmentRepository.deleteAppointment(shopId, created.id);
+    const cached = await appointmentRepository.getAppointments(shopId);
+    expect(cached.find((a) => a.id === created.id)).toBeUndefined();
+  });
 });
+

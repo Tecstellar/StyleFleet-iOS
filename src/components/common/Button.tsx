@@ -55,16 +55,16 @@ export const Button = ({
       case 'primary':
         return {
           ...base,
-          backgroundColor: colors.accent800,
+          backgroundColor: '#D4AF37',
           borderWidth: 1,
-          borderColor: colors.accent,
+          borderColor: '#D4AF37',
           paddingVertical: 12,
           paddingHorizontal: 16,
         };
       case 'secondary':
         return {
           ...base,
-          backgroundColor: colors.surface,
+          backgroundColor: colors.card,
           borderWidth: 1,
           borderColor: colors.divider,
           paddingVertical: 11,
@@ -97,9 +97,9 @@ export const Button = ({
     switch (variant) {
       case 'primary':
         return {
-          color: colors.accent100,
+          color: colors.isDark ? '#0B1F44' : '#1F2937',
           fontSize: 15,
-          fontWeight: '500',
+          fontWeight: '600',
         };
       case 'secondary':
         return {
@@ -131,12 +131,18 @@ export const Button = ({
       {loading ? (
         <ActivityIndicator
           size="small"
-          color={variant === 'primary' ? colors.accent100 : colors.text}
+          color={variant === 'primary' ? (colors.isDark ? '#0B1F44' : '#1F2937') : colors.text}
         />
       ) : (
         <>
           {icon}
-          {label ? <Text style={[getTextStyle(), labelStyle]}>{label}</Text> : children}
+          {label ? (
+            <Text style={[getTextStyle(), { flexShrink: 1, textAlign: 'center' }, labelStyle]} numberOfLines={2}>
+              {label}
+            </Text>
+          ) : (
+            children
+          )}
         </>
       )}
     </TouchableOpacity>

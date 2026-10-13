@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useTheme } from '../../theme/ThemeContext';
+import { DEFAULT_ACCENT } from '../../theme/colors';
 import { Button } from '../../components/common/Button';
 import { Input } from '../../components/common/Input';
 import { BackIcon } from '../../components/common/SvgIcons';
@@ -42,7 +43,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
 
   // Logo & Color Extraction state
   const [logoUri, setLogoUri] = useState<string | null>(initialData?.logoPath || null);
-  const [extractedColor, setExtractedColor] = useState<string>('#D9A441');
+  const [extractedColor, setExtractedColor] = useState<string>(DEFAULT_ACCENT);
   const [applyLogoColor, setApplyLogoColor] = useState<boolean>(true);
   const [isExtractingColor, setIsExtractingColor] = useState(false);
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
@@ -69,7 +70,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
         setIsExtractingColor(true);
 
         // Palette tone selection based on brand character
-        const brandColorPalette = ['#D9A441', '#E0C068', '#B8863B', '#8C6239'];
+        const brandColorPalette = [DEFAULT_ACCENT, '#E0C068', '#B8863B', '#8C6239'];
         const chosen = brandColorPalette[Math.floor(Math.random() * brandColorPalette.length)];
         setExtractedColor(chosen);
         setIsExtractingColor(false);
@@ -127,7 +128,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
     if (next) {
       setAccentColor(extractedColor);
     } else {
-      setAccentColor('#D9A441');
+      setAccentColor(DEFAULT_ACCENT);
     }
   };
 
@@ -149,7 +150,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
       city: city.trim(),
       pinCode: cleanPin,
       gstin: gst.trim() || undefined,
-      accentColor: applyLogoColor ? extractedColor : '#D9A441',
+      accentColor: applyLogoColor ? extractedColor : DEFAULT_ACCENT,
       logoPath: logoUri || undefined,
     });
   };
@@ -183,7 +184,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
       } else {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       }
-    }, 120);
+    }, 240);
   };
 
   return (
@@ -196,9 +197,9 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
           ref={scrollViewRef}
           contentContainerStyle={[
             styles.scrollContent,
-            { paddingBottom: Math.max(36, keyboardHeight + 40) },
+            { paddingBottom: Math.max(120, keyboardHeight + 160) },
           ]}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           automaticallyAdjustKeyboardInsets={true}
           showsVerticalScrollIndicator={false}
         >
@@ -206,39 +207,41 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
             <BackIcon size={18} color={colors.text} />
           </Button>
 
-          <Text style={[styles.heading, { color: colors.text }]}>Register your shop</Text>
-          <Text style={[styles.subheading, { color: colors.textDim }]}>
-            Step 1 of 2 · shop branding & address
-          </Text>
+          {/* Header Row: Title & Subtitle on Left, Compact Logo Avatar on Right */}
+          <View style={styles.headerRow}>
+            <View style={{ flex: 1, paddingRight: 12 }}>
+              <Text style={[styles.heading, { color: colors.text }]}>Register your shop</Text>
+              <Text style={[styles.subheading, { color: colors.textDim }]}>
+                Step 1 of 2 · shop details & address
+              </Text>
+            </View>
 
-          {/* Logo upload & Color extraction card */}
-          <View style={[styles.logoNoteCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+            {/* Compact Secondary Logo Selector Box */}
             <TouchableOpacity
-              style={[styles.logoPlaceholder, { backgroundColor: colors.accent800 }]}
+              style={[
+                styles.compactLogoBox,
+                {
+                  borderColor: logoUri ? colors.accent : colors.divider,
+                  backgroundColor: colors.surface,
+                },
+              ]}
               onPress={handlePickLogo}
               activeOpacity={0.8}
             >
               {logoUri ? (
-                <Image source={{ uri: logoUri }} style={styles.uploadedLogoImage} />
+                <>
+                  <Image source={{ uri: logoUri }} style={styles.compactLogoImage} />
+                  <View style={[styles.compactLogoBadge, { backgroundColor: colors.accent }]}>
+                    <Text style={{ fontSize: 9, color: colors.isDark ? '#0B1F44' : '#1F2937', fontWeight: '800' }}>✓</Text>
+                  </View>
+                </>
               ) : (
-                <Text style={{ color: colors.accent100, fontWeight: '700', fontSize: 16 }}>
-                  {shop.trim().length > 0 ? shop.trim().slice(0, 2).toUpperCase() : '📷'}
-                </Text>
+                <View style={styles.compactLogoEmpty}>
+                  <Text style={{ fontSize: 13, color: colors.accent, fontWeight: '700' }}>+ Logo</Text>
+                  <Text style={{ fontSize: 8.5, color: colors.textDim, marginTop: 1 }}>optional</Text>
+                </View>
               )}
             </TouchableOpacity>
-
-            <View style={{ flex: 1 }}>
-              <TouchableOpacity onPress={handlePickLogo}>
-                <Text style={[styles.uploadLogoLabel, { color: colors.accent }]}>
-                  {logoUri ? 'Change Salon Logo' : 'Upload Salon Logo'}
-                </Text>
-              </TouchableOpacity>
-              <Text style={[styles.logoNoteText, { color: colors.textMuted }]}>
-                {logoUri
-                  ? 'Logo uploaded · brand color extracted below.'
-                  : 'Tap to upload PNG/JPG logo to store in Supabase.'}
-              </Text>
-            </View>
           </View>
 
           {/* Extracted Color Apply Option (per user instruction) */}
@@ -255,7 +258,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
                 <View
                   style={[
                     styles.colorPreviewSwatch,
-                    { backgroundColor: extractedColor },
+                    { backgroundColor: extractedColor, borderColor: colors.divider },
                   ]}
                 />
                 <View style={{ flex: 1 }}>
@@ -263,7 +266,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
                     Apply logo color to salon theme?
                   </Text>
                   <Text style={[styles.colorSub, { color: colors.textDim }]}>
-                    Buttons, badges, and invoice accents will use {extractedColor}. Uncheck to keep default gold (#D9A441).
+                    Buttons, badges, and invoice accents will use {extractedColor}. Uncheck to keep default gold ({DEFAULT_ACCENT}).
                   </Text>
                 </View>
 
@@ -277,7 +280,9 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
                     },
                   ]}
                 >
-                  {applyLogoColor && <Text style={styles.checkMark}>✓</Text>}
+                  {applyLogoColor && (
+                    <Text style={[styles.checkMark, { color: colors.isDark ? '#0B1F44' : '#1F2937' }]}>✓</Text>
+                  )}
                 </View>
               </View>
             </TouchableOpacity>
@@ -332,7 +337,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
                 value={city}
                 onChangeText={setCity}
                 placeholder="Bengaluru"
-                onFocus={() => handleInputFocus(240)}
+                onFocus={() => handleInputFocus(300)}
               />
             </View>
             <View style={{ width: 112 }}>
@@ -347,7 +352,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
                 keyboardType="numeric"
                 maxLength={10}
                 placeholder="560001"
-                onFocus={() => handleInputFocus()}
+                onFocus={() => handleInputFocus(360)}
               />
             </View>
           </View>
@@ -357,7 +362,7 @@ export const RegisterScreen = ({ initialData, onNext, onBack }: RegisterScreenPr
             value={gst}
             onChangeText={setGst}
             placeholder="29ABCDE1234F1Z5"
-            onFocus={() => handleInputFocus()}
+            onFocus={() => handleInputFocus(460)}
           />
 
           {error ? <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text> : null}
@@ -386,12 +391,50 @@ const styles = StyleSheet.create({
   heading: {
     fontSize: 24,
     fontWeight: '500',
-    marginTop: 20,
+    marginTop: 0,
     marginBottom: 4,
   },
   subheading: {
     fontSize: 13,
+    marginBottom: 0,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 20,
     marginBottom: 16,
+  },
+  compactLogoBox: {
+    width: 62,
+    height: 62,
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  compactLogoImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: radii.md - 2,
+    resizeMode: 'cover',
+  },
+  compactLogoBadge: {
+    position: 'absolute',
+    bottom: 3,
+    right: 3,
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  compactLogoEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   logoNoteCard: {
     flexDirection: 'row',

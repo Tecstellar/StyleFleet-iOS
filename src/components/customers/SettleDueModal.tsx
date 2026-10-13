@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  Modal,
   TextInput,
   TouchableOpacity,
   StyleSheet,
@@ -10,11 +9,13 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
+import { Modal } from '../common/KeyboardAwareModal';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Customer } from '../../types/domain';
 import { inrFromMinor, getInitials } from '../../utils/format';
 import { radii } from '../../theme/spacing';
+import { CashIcon, UpiIcon } from '../common/SvgIcons';
 
 interface SettleDueModalProps {
   visible: boolean;
@@ -180,7 +181,9 @@ export const SettleDueModal = ({
                 onPress={() => setMethod('cash')}
                 activeOpacity={0.8}
               >
-                <Text style={{ fontSize: 16, marginRight: 6 }}>💵</Text>
+                <View style={{ marginRight: 6 }}>
+                  <CashIcon size={16} color={method === 'cash' ? colors.accent : colors.textDim} />
+                </View>
                 <Text
                   style={[
                     styles.methodBtnText,
@@ -202,7 +205,9 @@ export const SettleDueModal = ({
                 onPress={() => setMethod('upi')}
                 activeOpacity={0.8}
               >
-                <Text style={{ fontSize: 16, marginRight: 6 }}>📱</Text>
+                <View style={{ marginRight: 6 }}>
+                  <UpiIcon size={16} color={method === 'upi' ? colors.accent : colors.textDim} />
+                </View>
                 <Text
                   style={[
                     styles.methodBtnText,

@@ -1,7 +1,15 @@
 /**
  * StyleFleet Centralized Subscription Plan Configuration
- * All pricing, durations, savings, and discounts are calculated mathematically
- * from this single source of truth.
+ * All pricing, durations and savings come from this one file.
+ *
+ * Price list (INR).
+ *   Plan        Regular price     Offer price (first 30 days only)
+ *   3 months    ₹2,999            ₹2,999   no offer
+ *   6 months    ₹5,999            ₹4,799   saves ₹1,200 (20%)
+ *   12 months   ₹11,999           ₹5,999   saves ₹6,000 (50%)
+ *
+ * The 6 and 12 month offer is only for the first 30 days after the salon registered.
+ * After that every plan is at its regular price (see isWithinFirst30DaysOfRegistration).
  */
 
 export type PlanId =
@@ -19,9 +27,9 @@ export interface SubscriptionPlanConfig {
   name: string;
   durationMonths: number;
   durationDays: number;
-  price: number; // in INR
+  price: number; // in INR, what the salon pays
   priceInRupees: number; // alias for compatibility
-  originalPrice: number; // in INR (regular price before duration discount)
+  originalPrice: number; // in INR, the regular price of this plan (what it costs without the offer)
   perDayAmount: number;
   perDayDisplay: string;
   isPopular?: boolean;
@@ -44,72 +52,77 @@ export interface PlanPricingCalculation {
   formattedSavings: string;
 }
 
-// Baseline single-month price in INR
-export const BASELINE_MONTHLY_PRICE = 499;
+/** Reference price of one month, in INR. Plan prices are set per plan below; this is only for display and tests. */
+export const BASELINE_MONTHLY_PRICE = 999;
 
-export const SUBSCRIPTION_PLANS: SubscriptionPlanConfig[] = [
-  {
-    id: '3_months',
-    name: '3 Months',
-    durationMonths: 3,
-    durationDays: 90,
-    price: 1499,
-    priceInRupees: 1499,
-    originalPrice: 1499,
-    perDayAmount: 17,
-    perDayDisplay: '₹17 / day',
-    discountPercent: 0,
-    effectiveMonthlyRateMinor: 50000,
-    features: [
-      'Unlimited bills & invoices',
-      'Client management & WhatsApp bill sending',
-      'Staff sales & commission reports',
-      'Advanced sales analytics & reports',
-    ],
-  },
-  {
-    id: '6_months',
-    name: '6 Months',
-    durationMonths: 6,
-    durationDays: 180,
-    price: 2799,
-    priceInRupees: 2799,
-    originalPrice: 2994, // 499 * 6
-    perDayAmount: 15.5,
-    perDayDisplay: '₹15.5 / day',
-    isPopular: true,
-    badge: 'MOST POPULAR (7% OFF)',
-    discountPercent: 7,
-    effectiveMonthlyRateMinor: 46650,
-    features: [
-      'Everything in 3 Months plan',
-      'Custom salon branding on bills',
-      'Automated client recall nudges',
-      'VIP customer segmentation',
-    ],
-  },
-  {
-    id: '12_months',
-    name: '1 Year',
-    durationMonths: 12,
-    durationDays: 365,
-    price: 4999,
-    priceInRupees: 4999,
-    originalPrice: 5988, // 499 * 12
-    perDayAmount: 13.7,
-    perDayDisplay: '₹13.7 / day',
-    isBestValue: true,
-    badge: 'BEST VALUE (17% OFF)',
-    discountPercent: 17,
-    effectiveMonthlyRateMinor: 41658,
-    features: [
-      'Everything in 6 Months plan',
-      'Maximum savings (₹989 OFF)',
-      'Dedicated account manager',
-      'Free data backup & export',
-    ],
-  },
+/** Days after registration that the launch offer lasts */
+export const LAUNCH_OFFER_DAYS = 30;
+
+const PLAN_FEATURES = [
+  'Unlimited bill generation',
+  'Unlimited report downloads (PDF & Excel)',
+  'Team management & stylist commissions',
 ];
+
+interface PlanSpec {
+  id: PlanId;
+  months: number;
+  days: number;
+  /** INR paid after the launch offer (the regular price) */
+  regularPrice: number;
+  /** INR paid on the launch offer */
+  launchPrice: number;
+  launchBadge?: string;
+  isPopular?: boolean;
+  isBestValue?: boolean;
+}
+
+const PLAN_SPECS: PlanSpec[] = [
+  { id: '3_months', months: 3, days: 90, regularPrice: 2999, launchPrice: 2999 },
+  { id: '6_months', months: 6, days: 180, regularPrice: 5999, launchPrice: 4799, launchBadge: '20% OFF', isPopular: true },
+  { id: '12_months', months: 12, days: 365, regularPrice: 11999, launchPrice: 5999, launchBadge: '50% OFF', isBestValue: true },
+];
+
+function buildPlan(spec: PlanSpec, onLaunchOffer: boolean): SubscriptionPlanConfig {
+  const originalPrice = spec.regularPrice;
+  const price = onLaunchOffer ? spec.launchPrice : spec.regularPrice;
+  const monthlyRate = price / spec.months;
+  const perDay = price / spec.days;
+
+  return {
+    id: spec.id,
+    name: `${spec.months} Months`,
+    durationMonths: spec.months,
+    durationDays: spec.days,
+    price,
+    priceInRupees: price,
+    originalPrice,
+    perDayAmount: Math.round(perDay * 10) / 10,
+    perDayDisplay: `₹${perDay.toFixed(1)} / day`,
+    isPopular: onLaunchOffer ? spec.isPopular : undefined,
+    isBestValue: onLaunchOffer ? spec.isBestValue : undefined,
+    badge: onLaunchOffer ? spec.launchBadge : undefined,
+    discountPercent: originalPrice > price ? Math.round(((originalPrice - price) / originalPrice) * 100) : 0,
+    effectiveMonthlyRateMinor: Math.round(monthlyRate * 100),
+    features: PLAN_FEATURES,
+  };
+}
+
+// Regular plans: shown once the salon is more than 30 days past registration. No discounts.
+export const STANDARD_SUBSCRIPTION_PLANS: SubscriptionPlanConfig[] = PLAN_SPECS.map((s) => buildPlan(s, false));
+
+// Launch offer plans: available only during the first 30 days after registration.
+export const LAUNCH_OFFER_SUBSCRIPTION_PLANS: SubscriptionPlanConfig[] = PLAN_SPECS.map((s) => buildPlan(s, true));
+
+// Default baseline plans export (backwards compatibility)
+export const SUBSCRIPTION_PLANS: SubscriptionPlanConfig[] = STANDARD_SUBSCRIPTION_PLANS;
+
+/**
+ * Returns the active subscription plans based on whether the user is eligible for the First 30 Days Launch Offer
+ */
+export function getSubscriptionPlans(isLaunchOffer: boolean = false): SubscriptionPlanConfig[] {
+  return isLaunchOffer ? LAUNCH_OFFER_SUBSCRIPTION_PLANS : STANDARD_SUBSCRIPTION_PLANS;
+}
 
 /**
  * Formats a number to Indian Rupee representation (e.g. ₹1,299)
@@ -153,14 +166,24 @@ export function calculatePlanPricing(plan: SubscriptionPlanConfig): PlanPricingC
 }
 
 /**
- * Find plan by its unique plan ID (supporting both legacy sf_plan_X and direct IDs)
+ * Find plan by its unique plan ID (supporting both launch offer and standard pools)
  */
-export function getPlanById(planId: string): SubscriptionPlanConfig | undefined {
+export function getPlanById(
+  planId: string,
+  isLaunchOffer: boolean = false
+): SubscriptionPlanConfig | undefined {
   const normalizedId = planId
     .replace('sf_plan_', '')
     .replace('1m', '1_month')
     .replace('3m', '3_months')
     .replace('6m', '6_months')
     .replace('12m', '12_months');
-  return SUBSCRIPTION_PLANS.find((p) => p.id === planId || p.id === normalizedId);
+
+  const primaryPool = isLaunchOffer ? LAUNCH_OFFER_SUBSCRIPTION_PLANS : STANDARD_SUBSCRIPTION_PLANS;
+  const secondaryPool = isLaunchOffer ? STANDARD_SUBSCRIPTION_PLANS : LAUNCH_OFFER_SUBSCRIPTION_PLANS;
+
+  return (
+    primaryPool.find((p) => p.id === planId || p.id === normalizedId) ||
+    secondaryPool.find((p) => p.id === planId || p.id === normalizedId)
+  );
 }

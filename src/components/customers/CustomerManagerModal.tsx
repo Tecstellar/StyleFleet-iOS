@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  Modal,
   TextInput,
   TouchableOpacity,
   ScrollView,
@@ -12,14 +11,18 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Keyboard,
 } from 'react-native';
+import { Modal } from '../common/KeyboardAwareModal';
 import * as Contacts from 'expo-contacts/legacy';
 import { useTheme } from '../../theme/ThemeContext';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { Customer } from '../../types/domain';
 import { inrFromMinor, getInitials } from '../../utils/format';
-import { radii } from '../../theme/spacing';
 import { customerRepository } from '../../repositories/customerRepository';
+import { deviceContactsService } from '../../services/deviceContactsService';
+import { supabase } from '../../lib/supabase';
+import { ImportContactsIcon, EditIcon } from '../common/SvgIcons';
 
 interface ContactItem {
   id: string;
@@ -27,75 +30,6 @@ interface ContactItem {
   phone: string;
   initialDue?: number;
 }
-
-interface ContactRowProps {
-  item: ContactItem;
-  isSelected: boolean;
-  isAlreadyOnRecord?: boolean;
-  colors: any;
-  onToggle: (id: string) => void;
-  onEdit: (item: ContactItem) => void;
-}
-
-const ContactRow = memo(({ item, isSelected, isAlreadyOnRecord, colors, onToggle, onEdit }: ContactRowProps) => {
-  return (
-    <View
-      style={[
-        styles.contactRow,
-        {
-          backgroundColor: isSelected ? 'rgba(217,164,65,0.12)' : 'transparent',
-          borderBottomColor: colors.divider,
-          opacity: isAlreadyOnRecord ? 0.65 : 1,
-        },
-      ]}
-    >
-      {/* Checkbox */}
-      <TouchableOpacity
-        activeOpacity={0.8}
-        disabled={isAlreadyOnRecord}
-        onPress={() => onToggle(item.id)}
-        style={[
-          styles.checkbox,
-          {
-            borderColor: isAlreadyOnRecord ? colors.divider : isSelected ? colors.accent : colors.divider,
-            backgroundColor: isSelected ? colors.accent : 'transparent',
-          },
-        ]}
-      >
-        {isSelected && <Text style={styles.checkMark}>✓</Text>}
-      </TouchableOpacity>
-
-      {/* Contact Info (Tapping opens edit modal) */}
-      <TouchableOpacity
-        activeOpacity={0.7}
-        onPress={() => onEdit(item)}
-        style={styles.contactInfo}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={[styles.contactName, { color: colors.text, flexShrink: 1 }]} numberOfLines={1}>
-            {item.name}
-          </Text>
-          {isAlreadyOnRecord && (
-            <View style={[styles.onRecordBadge, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
-              <Text style={[styles.onRecordText, { color: colors.textDim }]}>Already on File</Text>
-            </View>
-          )}
-        </View>
-        <Text style={[styles.contactPhone, { color: colors.textDim }]} numberOfLines={1}>
-          +91 {item.phone} {item.initialDue ? `· Due: ₹${item.initialDue}` : ''}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Edit Details Action */}
-      <TouchableOpacity
-        onPress={() => onEdit(item)}
-        style={[styles.editPill, { borderColor: colors.divider }]}
-      >
-        <Text style={[styles.editPillText, { color: colors.accent }]}>Edit / Due</Text>
-      </TouchableOpacity>
-    </View>
-  );
-});
 
 interface CustomerManagerModalProps {
   visible: boolean;
@@ -106,6 +40,8 @@ interface CustomerManagerModalProps {
   onAddSuccess: (customer: Customer) => void;
   onBatchSuccess: (customers: Customer[]) => void;
   onEditSuccess: (customer: Customer) => void;
+  /** Bulk import from the phone's contacts. Owners only; defaults to allowed. */
+  allowContactImport?: boolean;
 }
 
 export const CustomerManagerModal = ({
@@ -117,6 +53,7 @@ export const CustomerManagerModal = ({
   onAddSuccess,
   onBatchSuccess,
   onEditSuccess,
+  allowContactImport = true,
 }: CustomerManagerModalProps) => {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -140,6 +77,88 @@ export const CustomerManagerModal = ({
   const [editingContact, setEditingContact] = useState<ContactItem | null>(null);
   const [isLoadingContacts, setIsLoadingContacts] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const manualScrollRef = React.useRef<ScrollView>(null);
+
+  // Android does not move this sheet for the keyboard. After the keyboard opens, measure where the
+  // sheet's bottom edge really is on screen and lift it by exactly the part the keyboard covers.
+  const sheetRef = React.useRef<View>(null);
+  const keyboardTop = React.useRef<number | null>(null);
+  const [lift, setLift] = useState(0);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    if (keyboardHeight === 0) {
+      setLift(0);
+      return undefined;
+    }
+    const id = setTimeout(() => {
+      const top = keyboardTop.current;
+      if (top == null) return;
+      sheetRef.current?.measureInWindow((_x, y, _w, h) => {
+        const overlap = y + h - top;
+        if (overlap > 2) setLift((prev) => Math.min(keyboardHeight, prev + overlap));
+      });
+    }, 80);
+    return () => clearTimeout(id);
+  }, [keyboardHeight, lift, viewMode]);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        keyboardTop.current = e.endCoordinates.screenY;
+        setKeyboardHeight(e.endCoordinates.height);
+      }
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => {
+        keyboardTop.current = null;
+        setKeyboardHeight(0);
+      }
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Keep the field being typed in visible without a timed scroll-to-end (that fought the keyboard resize and made the sheet jump)
+  const fieldY = React.useRef<Record<string, number>>({});
+  const focusedField = React.useRef<string | null>(null);
+
+  const scrollToField = (key: string) => {
+    manualScrollRef.current?.scrollTo({ y: Math.max(0, (fieldY.current[key] ?? 0) - 12), animated: false });
+  };
+
+  const handleFieldFocus = (key: string) => {
+    focusedField.current = key;
+    if (keyboardHeight > 0) scrollToField(key);
+  };
+
+  useEffect(() => {
+    if (keyboardHeight > 0 && focusedField.current) {
+      const key = focusedField.current;
+      const id = requestAnimationFrame(() => scrollToField(key));
+      return () => cancelAnimationFrame(id);
+    }
+    return undefined;
+  }, [keyboardHeight]);
+
+  // Map of 10-digit normalized phone -> customer for instant duplicate checks
+  const existingPhoneMap = React.useMemo(() => {
+    const map = new Map<string, Customer>();
+    for (const c of existingCustomers) {
+      if (c && c.phone) {
+        const clean = c.phone.replace(/\D/g, '').slice(-10);
+        if (clean.length === 10) {
+          map.set(clean, c);
+        }
+      }
+    }
+    return map;
+  }, [existingCustomers]);
 
   // Synchronize modal mode and fields when opened or customerToEdit changes
   useEffect(() => {
@@ -156,7 +175,8 @@ export const CustomerManagerModal = ({
         setNotes(customerToEdit.notes || '');
         setIsStarred(Boolean(customerToEdit.is_starred));
       } else {
-        setViewMode('choice');
+        // Stylists cannot import contacts in bulk: they add one client at a time
+        setViewMode(allowContactImport ? 'choice' : 'manual');
         setName('');
         setPhone('');
         setInitialDue('');
@@ -164,7 +184,7 @@ export const CustomerManagerModal = ({
         setIsStarred(false);
       }
     }
-  }, [visible, customerToEdit]);
+  }, [visible, customerToEdit, allowContactImport]);
 
   // Load Real Device Contacts
   const handleOpenContacts = async () => {
@@ -191,35 +211,16 @@ export const CustomerManagerModal = ({
         return;
       }
 
-      const allContacts: Contacts.ExistingContact[] = [];
-      let pageOffset = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.PhoneNumbers],
+        sort: Contacts.SortTypes.FirstName,
+      });
 
-      while (hasMore && pageOffset < 20000) {
-        const response = await Contacts.getContactsAsync({
-          fields: [Contacts.Fields.PhoneNumbers],
-          sort: Contacts.SortTypes.FirstName,
-          pageSize,
-          pageOffset,
-        });
-
-        if (response?.data && response.data.length > 0) {
-          allContacts.push(...response.data);
-        }
-
-        if (response?.hasNextPage && response.data && response.data.length >= pageSize) {
-          pageOffset += pageSize;
-        } else {
-          hasMore = false;
-        }
-      }
-
-      if (allContacts.length > 0) {
+      if (data && data.length > 0) {
         const formatted: ContactItem[] = [];
         const seenNumbers = new Set<string>();
 
-        for (const item of allContacts) {
+        for (const item of data) {
           const contactName = (
             item.name ||
             `${item.firstName || ''} ${item.lastName || ''}`.trim() ||
@@ -275,70 +276,66 @@ export const CustomerManagerModal = ({
   const handleSearchContacts = (text: string) => {
     setContactSearch(text);
     const q = text.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
     if (!q) {
       setFilteredContacts(deviceContacts);
     } else {
       setFilteredContacts(
-        deviceContacts.filter(
-          (c) => c.name.toLowerCase().includes(q) || c.phone.includes(q)
-        )
+        deviceContacts.filter((c) => {
+          const matchName = c.name.toLowerCase().includes(q);
+          const matchPhone = c.phone.includes(q) || (qDigits.length >= 3 && c.phone.includes(qDigits));
+          return matchName || matchPhone;
+        })
       );
     }
   };
 
   // Toggle single selection
-  const toggleContactSelection = useCallback((id: string) => {
+  const toggleContactSelection = (contact: ContactItem) => {
+    if (existingPhoneMap.has(contact.phone)) {
+      const existing = existingPhoneMap.get(contact.phone);
+      Alert.alert(
+        'Customer Already Exists',
+        `+91 ${contact.phone} is already registered on file (${existing?.name || 'Client'}). No need to import duplicate.`
+      );
+      return;
+    }
     setSelectedContactIds((prev) => ({
       ...prev,
-      [id]: !prev[id],
+      [contact.id]: !prev[contact.id],
     }));
-  }, []);
+  };
 
-  const existingCustomerPhoneSet = useMemo(() => {
-    return new Set(
-      (existingCustomers || []).map((c) => c.phone.replace(/\D/g, '').slice(-10))
-    );
-  }, [existingCustomers]);
-
-  // Select / Deselect All (only selecting contacts that are not already on record)
+  // Select / Deselect All
   const handleSelectAll = () => {
-    const unaddedContacts = filteredContacts.filter((c) => !existingCustomerPhoneSet.has(c.phone));
-    const allSelected = unaddedContacts.every((c) => selectedContactIds[c.id]) && unaddedContacts.length > 0;
-    if (allSelected) {
-      setSelectedContactIds({});
-    } else {
-      const updated: Record<string, boolean> = { ...selectedContactIds };
-      for (const c of unaddedContacts) {
-        updated[c.id] = true;
-      }
-      setSelectedContactIds(updated);
+    const available = filteredContacts.filter((c) => !existingPhoneMap.has(c.phone));
+    if (available.length === 0) {
+      Alert.alert(
+        'All Contacts Registered',
+        'All contacts in this list are already registered in your customer database.'
+      );
+      return;
     }
+    const allSelected = available.every((c) => selectedContactIds[c.id]);
+    const updated: Record<string, boolean> = { ...selectedContactIds };
+    for (const c of filteredContacts) {
+      if (existingPhoneMap.has(c.phone)) {
+        updated[c.id] = false;
+      } else {
+        updated[c.id] = !allSelected;
+      }
+    }
+    setSelectedContactIds(updated);
   };
 
   // Open single contact editor
-  const handleEditContact = useCallback((contact: ContactItem) => {
+  const handleEditContact = (contact: ContactItem) => {
     setEditingContact(contact);
     setName(contact.name);
     setPhone(contact.phone);
     setInitialDue(contact.initialDue ? String(contact.initialDue) : '');
     setViewMode('edit_contact');
-  }, []);
-
-  const renderContactItem = useCallback(
-    ({ item }: { item: ContactItem }) => (
-      <ContactRow
-        item={item}
-        isSelected={!!selectedContactIds[item.id]}
-        isAlreadyOnRecord={existingCustomerPhoneSet.has(item.phone)}
-        colors={colors}
-        onToggle={toggleContactSelection}
-        onEdit={handleEditContact}
-      />
-    ),
-    [selectedContactIds, existingCustomerPhoneSet, colors, toggleContactSelection, handleEditContact]
-  );
-
-  const keyExtractor = useCallback((item: ContactItem) => item.id, []);
+  };
 
   // Save single contact after edit
   const handleSaveEditedContact = () => {
@@ -349,6 +346,15 @@ export const CustomerManagerModal = ({
     const cleanPhone = phone.replace(/\D/g, '').slice(-10);
     if (cleanPhone.length !== 10) {
       Alert.alert('Invalid Number', 'Please enter a valid 10-digit mobile number');
+      return;
+    }
+
+    if (existingPhoneMap.has(cleanPhone)) {
+      const existing = existingPhoneMap.get(cleanPhone);
+      Alert.alert(
+        'Customer Already Exists',
+        `Mobile +91 ${cleanPhone} is already registered on file (${existing?.name || 'Client'}).`
+      );
       return;
     }
 
@@ -379,7 +385,7 @@ export const CustomerManagerModal = ({
     setViewMode('contacts');
   };
 
-  // Batch import selected contacts (skipping duplicate phone numbers)
+  // Batch import selected contacts
   const handleImportSelected = async () => {
     const selected = deviceContacts.filter((c) => selectedContactIds[c.id]);
     if (selected.length === 0) {
@@ -387,20 +393,31 @@ export const CustomerManagerModal = ({
       return;
     }
 
-    const unadded = selected.filter((c) => !existingCustomerPhoneSet.has(c.phone));
-    const alreadyRegisteredCount = selected.length - unadded.length;
+    // Separate duplicates and unique contacts
+    const duplicates: ContactItem[] = [];
+    const uniqueToImport: ContactItem[] = [];
 
-    if (unadded.length === 0) {
+    for (const c of selected) {
+      if (existingPhoneMap.has(c.phone)) {
+        duplicates.push(c);
+      } else {
+        uniqueToImport.push(c);
+      }
+    }
+
+    if (uniqueToImport.length === 0) {
       Alert.alert(
-        'Already on File',
-        'All selected contact(s) are already registered in your salon customer list. No duplicates were added.'
+        'Already Registered',
+        duplicates.length === 1
+          ? `+91 ${duplicates[0].phone} is already present in your customer database (${existingPhoneMap.get(duplicates[0].phone)?.name}). No duplicate was added.`
+          : `All ${duplicates.length} selected contacts are already registered in your customer database. No duplicates were added.`
       );
       return;
     }
 
     setIsSubmitting(true);
     try {
-      const payload = unadded.map((c) => ({
+      const payload = uniqueToImport.map((c) => ({
         name: c.name,
         phone: c.phone,
         initialDueMinor: c.initialDue ? Math.round(c.initialDue * 100) : 0,
@@ -409,13 +426,14 @@ export const CustomerManagerModal = ({
       const created = await customerRepository.importContacts(shopId, payload);
       onBatchSuccess(created);
       onClose();
-      if (alreadyRegisteredCount > 0) {
+
+      if (duplicates.length > 0) {
         Alert.alert(
           'Import Complete',
-          `Imported ${created.length} new customer(s). Skipped ${alreadyRegisteredCount} contact(s) already on file.`
+          `Added ${created.length} new customer(s).\n\n${duplicates.length} contact(s) were skipped because their mobile number is already registered in your salon.`
         );
       } else {
-        Alert.alert('Success', `Imported ${created.length} customer(s) into database!`);
+        Alert.alert('Success', `Imported ${created.length} new customer(s) into database!`);
       }
     } catch (e: any) {
       Alert.alert('Import Failed', e.message || 'Error saving contacts to database.');
@@ -436,24 +454,31 @@ export const CustomerManagerModal = ({
       return;
     }
 
+    // Check if customer with this mobile number already exists on file
+    if (!customerToEdit) {
+      const alreadyExists = existingPhoneMap.get(cleanPhone);
+      if (alreadyExists) {
+        Alert.alert(
+          'Customer Already Exists',
+          `A customer with mobile +91 ${cleanPhone} is already present on file (${alreadyExists.name}).\n\nNo duplicate customer was created.`
+        );
+        return;
+      }
+    } else {
+      const phoneConflict = existingPhoneMap.get(cleanPhone);
+      if (phoneConflict && phoneConflict.id !== customerToEdit.id) {
+        Alert.alert(
+          'Phone Already In Use',
+          `Mobile +91 ${cleanPhone} is already registered to another customer (${phoneConflict.name}).`
+        );
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       if (customerToEdit) {
         // Edit existing customer
-        const conflict = existingCustomers?.find(
-          (c) =>
-            c.id !== customerToEdit.id &&
-            (c.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone
-        );
-        if (conflict) {
-          Alert.alert(
-            'Phone Already In Use',
-            `Mobile +91 ${cleanPhone} is already registered to another customer (${conflict.name}).`
-          );
-          setIsSubmitting(false);
-          return;
-        }
-
         const dueAmt = parseFloat(initialDue) || 0;
         const dueMinor = Math.round(dueAmt * 100);
 
@@ -465,26 +490,35 @@ export const CustomerManagerModal = ({
           dueMinor: dueMinor,
         });
         if (updated) {
-          try {
-            onEditSuccess(updated);
-          } catch (callbackErr) {
-            console.warn('onEditSuccess callback notice:', callbackErr);
-          }
+          onEditSuccess(updated);
           onClose();
           Alert.alert('Updated', 'Customer details saved successfully!');
         }
       } else {
-        // Check duplicate mobile
-        const existingCust = existingCustomers?.find(
-          (c) => (c.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone
-        );
-        if (existingCust) {
-          Alert.alert(
-            'Customer Already Exists',
-            `A customer with mobile +91 ${cleanPhone} already exists: ${existingCust.name}`
-          );
-          setIsSubmitting(false);
-          return;
+        // Double check directly with Supabase in case local state had a delay
+        if (shopId) {
+          try {
+            const { data: dbCustomers } = await supabase
+              .from('customers')
+              .select('id, name, phone')
+              .eq('shop_id', shopId);
+
+            if (dbCustomers && dbCustomers.length > 0) {
+              const dbMatch = dbCustomers.find(
+                (c: any) => (c.phone || '').replace(/\D/g, '').slice(-10) === cleanPhone
+              );
+              if (dbMatch) {
+                Alert.alert(
+                  'Customer Already Exists',
+                  `A customer with mobile +91 ${cleanPhone} is already present on file (${dbMatch.name}).\n\nNo duplicate customer was created.`
+                );
+                setIsSubmitting(false);
+                return;
+              }
+            }
+          } catch (dbErr) {
+            // continue to addCustomer which has error handling
+          }
         }
 
         // Add new customer
@@ -501,11 +535,16 @@ export const CustomerManagerModal = ({
         );
 
         onAddSuccess(newCust);
+        // Safely persist to device native contacts if user permitted, with zero duplicates
+        deviceContactsService.saveCustomerToDevice(newCust.name, newCust.phone).catch(() => {});
         onClose();
         Alert.alert('Customer Saved', `${newCust.name} added to your client list!`);
       }
     } catch (e: any) {
-      Alert.alert('Save Failed', e.message || 'Error saving customer.');
+      Alert.alert(
+        e?.message?.includes('already exists') ? 'Customer Already Exists' : 'Save Failed',
+        e.message || 'Error saving customer.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -519,13 +558,17 @@ export const CustomerManagerModal = ({
     <Modal visible={visible} transparent animationType="slide">
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}
-        style={styles.modalOverlay}
+        style={{ flex: 1 }}
       >
+        {/* The sheet is lifted by `lift` so the keyboard never covers the fields */}
+        <View style={[styles.modalOverlay, lift > 0 ? { paddingBottom: lift } : null]}>
         <View
+          ref={sheetRef}
+          collapsable={false}
           style={[
             styles.modalContent,
             { backgroundColor: colors.surface, borderColor: colors.divider },
+            keyboardHeight > 0 ? { paddingBottom: 10 } : null,
           ]}
         >
           {/* VIEW: OPTION CHOICE SHEET */}
@@ -553,7 +596,7 @@ export const CustomerManagerModal = ({
                 ]}
               >
                 <View style={[styles.optionIconBox, { backgroundColor: 'rgba(217, 164, 65, 0.15)' }]}>
-                  <Text style={styles.optionEmoji}>📱</Text>
+                  <ImportContactsIcon size={22} color={colors.accent} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.optionTitle, { color: colors.text }]}>
@@ -582,7 +625,7 @@ export const CustomerManagerModal = ({
                 ]}
               >
                 <View style={[styles.optionIconBox, { backgroundColor: 'rgba(217, 164, 65, 0.15)' }]}>
-                  <Text style={styles.optionEmoji}>✍️</Text>
+                  <EditIcon size={20} color={colors.accent} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.optionTitle, { color: colors.text }]}>
@@ -599,15 +642,15 @@ export const CustomerManagerModal = ({
 
           {/* VIEW: CONTACTS DIRECTORY PICKER */}
           {viewMode === 'contacts' && (
-            <View style={styles.contactsContainer}>
+            <View
+              style={[
+                styles.contactsContainer,
+                keyboardHeight > 0 ? { maxHeight: Math.max(280, 520 - Math.min(keyboardHeight, 220)) } : null,
+              ]}
+            >
               <View style={styles.sheetHeader}>
-                <TouchableOpacity
-                  onPress={() => setViewMode('choice')}
-                  style={[styles.backBtnPill, { backgroundColor: colors.surface, borderColor: colors.divider }]}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={[styles.backNavText, { color: colors.accent }]}>← {t('back', 'Back')}</Text>
+                <TouchableOpacity onPress={() => setViewMode('choice')}>
+                  <Text style={[styles.backNavText, { color: colors.accent }]}>← Back</Text>
                 </TouchableOpacity>
                 <Text style={[styles.sheetTitle, { color: colors.text }]}>
                   {t('selectContacts', 'Phone Contacts')}
@@ -624,7 +667,7 @@ export const CustomerManagerModal = ({
                   { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text },
                 ]}
                 placeholder={t('searchDeviceContacts', 'Search name or number...')}
-                placeholderTextColor="rgba(255,255,255,0.3)"
+                placeholderTextColor={colors.placeholder || colors.textDim}
                 value={contactSearch}
                 onChangeText={handleSearchContacts}
               />
@@ -650,26 +693,19 @@ export const CustomerManagerModal = ({
               ) : (
                 <FlatList
                   data={filteredContacts}
-                  keyExtractor={keyExtractor}
-                  renderItem={renderContactItem}
-                  extraData={selectedContactIds}
+                  keyExtractor={(item) => item.id}
+                  style={[
+                    styles.contactsList,
+                    keyboardHeight > 0 ? { maxHeight: Math.max(160, 380 - Math.min(keyboardHeight, 200)) } : null,
+                  ]}
+                  keyboardShouldPersistTaps="handled"
                   initialNumToRender={25}
-                  maxToRenderPerBatch={25}
+                  maxToRenderPerBatch={35}
                   windowSize={7}
                   removeClippedSubviews={Platform.OS === 'android'}
-                  keyboardShouldPersistTaps="handled"
-                  style={styles.contactsList}
-                  contentContainerStyle={
-                    filteredContacts.length === 0 ? { flexGrow: 1 } : { paddingBottom: 16 }
-                  }
                   ListEmptyComponent={
                     <View style={{ paddingVertical: 40, paddingHorizontal: 24, alignItems: 'center' }}>
-                      <Text
-                        style={[
-                          styles.emptyContactsText,
-                          { color: colors.textDim, textAlign: 'center', lineHeight: 20 },
-                        ]}
-                      >
+                      <Text style={[styles.emptyContactsText, { color: colors.textDim, textAlign: 'center', lineHeight: 20 }]}>
                         {permissionError
                           ? permissionError
                           : contactSearch
@@ -695,6 +731,77 @@ export const CustomerManagerModal = ({
                       </TouchableOpacity>
                     </View>
                   }
+                  renderItem={({ item: c }) => {
+                    const isAlreadyRegistered = existingPhoneMap.has(c.phone);
+                    const existingCustomer = existingPhoneMap.get(c.phone);
+                    const isSelected = !!selectedContactIds[c.id];
+                    return (
+                      <View
+                        style={[
+                          styles.contactRow,
+                          {
+                            backgroundColor: isSelected ? 'rgba(217,164,65,0.1)' : 'transparent',
+                            borderBottomColor: colors.divider,
+                            opacity: isAlreadyRegistered ? 0.6 : 1,
+                          },
+                        ]}
+                      >
+                        {/* Checkbox */}
+                        <TouchableOpacity
+                          activeOpacity={0.8}
+                          onPress={() => toggleContactSelection(c)}
+                          style={[
+                            styles.checkbox,
+                            {
+                              borderColor: isAlreadyRegistered ? colors.divider : isSelected ? colors.accent : colors.divider,
+                              backgroundColor: isAlreadyRegistered ? colors.trackBg : isSelected ? colors.accent : 'transparent',
+                            },
+                          ]}
+                        >
+                          {isAlreadyRegistered ? (
+                            <Text style={{ fontSize: 10, color: colors.textDim }}>✕</Text>
+                          ) : isSelected ? (
+                            <Text style={styles.checkMark}>✓</Text>
+                          ) : null}
+                        </TouchableOpacity>
+
+                        {/* Contact Info (Tapping opens edit modal if new, or shows alert if already registered) */}
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            if (isAlreadyRegistered) {
+                              Alert.alert(
+                                'Customer Already Exists',
+                                `+91 ${c.phone} is already registered in your salon as "${existingCustomer?.name}". No duplicate will be added.`
+                              );
+                            } else {
+                              handleEditContact(c);
+                            }
+                          }}
+                          style={styles.contactInfo}
+                        >
+                          <Text style={[styles.contactName, { color: colors.text }]}>{c.name}</Text>
+                          <Text style={[styles.contactPhone, { color: isAlreadyRegistered ? colors.accent : colors.textDim }]}>
+                            +91 {c.phone} {isAlreadyRegistered ? `· Already in salon (${existingCustomer?.name})` : c.initialDue ? `· Due: ₹${c.initialDue}` : ''}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {/* Edit Details Action / Status Pill */}
+                        {!isAlreadyRegistered ? (
+                          <TouchableOpacity
+                            onPress={() => handleEditContact(c)}
+                            style={[styles.editPill, { borderColor: colors.divider }]}
+                          >
+                            <Text style={[styles.editPillText, { color: colors.accent }]}>Edit / Due</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <View style={[styles.editPill, { borderColor: 'transparent', backgroundColor: 'rgba(217,164,65,0.1)' }]}>
+                            <Text style={[styles.editPillText, { color: colors.accent, fontSize: 11 }]}>On File</Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  }}
                 />
               )}
 
@@ -735,12 +842,18 @@ export const CustomerManagerModal = ({
                 </TouchableOpacity>
               </View>
 
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }}>
+              <ScrollView
+                ref={manualScrollRef}
+                style={{ flexShrink: 1 }}
+                contentContainerStyle={{ paddingBottom: keyboardHeight > 0 ? 80 : 25 }}
+                keyboardShouldPersistTaps="always"
+                showsVerticalScrollIndicator={true}
+              >
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
                   placeholder="e.g. Rahul Verma"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  placeholderTextColor={colors.placeholder || colors.textDim}
                   value={name}
                   onChangeText={setName}
                 />
@@ -749,22 +862,25 @@ export const CustomerManagerModal = ({
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
                   placeholder="10-digit mobile"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  placeholderTextColor={colors.placeholder || colors.textDim}
                   keyboardType="phone-pad"
                   maxLength={10}
                   value={phone}
-                  onChangeText={setPhone}
+                  onChangeText={(val) => setPhone(val.replace(/\D/g, '').slice(0, 10))}
                 />
 
-                <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('initialDue')}</Text>
-                <TextInput
-                  style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
-                  placeholder="0 (leave empty if none)"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  keyboardType="numeric"
-                  value={initialDue}
-                  onChangeText={setInitialDue}
-                />
+                <View onLayout={(e) => { fieldY.current.contactDue = e.nativeEvent.layout.y; }}>
+                  <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('initialDue')}</Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                    placeholder="0 (leave empty if none)"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    keyboardType="numeric"
+                    value={initialDue}
+                    onChangeText={setInitialDue}
+                    onFocus={() => handleFieldFocus('contactDue')}
+                  />
+                </View>
 
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -781,7 +897,7 @@ export const CustomerManagerModal = ({
           {viewMode === 'manual' && (
             <View style={styles.manualContainer}>
               <View style={styles.sheetHeader}>
-                {!customerToEdit && (
+                {!customerToEdit && allowContactImport && (
                   <TouchableOpacity onPress={() => setViewMode('choice')}>
                     <Text style={[styles.backNavText, { color: colors.accent }]}>← {t('back')}</Text>
                   </TouchableOpacity>
@@ -794,38 +910,49 @@ export const CustomerManagerModal = ({
                 </TouchableOpacity>
               </View>
 
-              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 60 }}>
+              <ScrollView
+                ref={manualScrollRef}
+                style={{ flexShrink: 1 }}
+                contentContainerStyle={{ paddingBottom: keyboardHeight > 0 ? 80 : 25 }}
+                keyboardShouldPersistTaps="always"
+                showsVerticalScrollIndicator={true}
+              >
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('fullName')}</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
                   placeholder="e.g. Sameer Khan"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  placeholderTextColor={colors.placeholder || colors.textDim}
                   value={name}
                   onChangeText={setName}
+                  onFocus={() => { focusedField.current = null; }}
                 />
 
                 <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('mobileNumber')}</Text>
                 <TextInput
                   style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
                   placeholder="10-digit mobile"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  placeholderTextColor={colors.placeholder || colors.textDim}
                   keyboardType="phone-pad"
                   maxLength={10}
                   value={phone}
-                  onChangeText={setPhone}
+                  onChangeText={(val) => setPhone(val.replace(/\D/g, '').slice(0, 10))}
+                  onFocus={() => { focusedField.current = null; }}
                 />
 
-                <Text style={[styles.inputLabel, { color: colors.textDim }]}>
-                  {customerToEdit ? t('outstandingDue') : t('initialDue')}
-                </Text>
-                <TextInput
-                  style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
-                  placeholder="0.00"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  keyboardType="numeric"
-                  value={initialDue}
-                  onChangeText={setInitialDue}
-                />
+                <View onLayout={(e) => { fieldY.current.due = e.nativeEvent.layout.y; }}>
+                  <Text style={[styles.inputLabel, { color: colors.textDim }]}>
+                    {customerToEdit ? t('outstandingDue') : t('initialDue')}
+                  </Text>
+                  <TextInput
+                    style={[styles.textInput, { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text }]}
+                    placeholder="0.00"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    keyboardType="numeric"
+                    value={initialDue}
+                    onChangeText={setInitialDue}
+                    onFocus={() => handleFieldFocus('due')}
+                  />
+                </View>
 
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -843,18 +970,21 @@ export const CustomerManagerModal = ({
                   </View>
                 </TouchableOpacity>
 
-                <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('notes')}</Text>
-                <TextInput
-                  style={[
-                    styles.textInput,
-                    { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, height: 70 },
-                  ]}
-                  placeholder="e.g. Prefers scissor cut, skin fade regular"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  multiline
-                  value={notes}
-                  onChangeText={setNotes}
-                />
+                <View onLayout={(e) => { fieldY.current.notes = e.nativeEvent.layout.y; }}>
+                  <Text style={[styles.inputLabel, { color: colors.textDim }]}>{t('notes')}</Text>
+                  <TextInput
+                    style={[
+                      styles.textInput,
+                      { backgroundColor: colors.bg, borderColor: colors.divider, color: colors.text, height: 75, textAlignVertical: 'top' },
+                    ]}
+                    placeholder="e.g. Prefers scissor cut, skin fade regular"
+                    placeholderTextColor={colors.placeholder || colors.textDim}
+                    multiline
+                    value={notes}
+                    onChangeText={setNotes}
+                    onFocus={() => handleFieldFocus('notes')}
+                  />
+                </View>
 
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -874,6 +1004,7 @@ export const CustomerManagerModal = ({
             </View>
           )}
         </View>
+      </View>
       </KeyboardAvoidingView>
     </Modal>
   );
@@ -918,24 +1049,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  backBtnPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-  },
-  onRecordBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: radii.sm,
-    borderWidth: 1,
-  },
-  onRecordText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
   choiceContainer: {
     paddingBottom: 20,
   },
@@ -973,7 +1086,6 @@ const styles = StyleSheet.create({
   },
   contactsContainer: {
     maxHeight: 520,
-    flexShrink: 1,
   },
   searchInput: {
     height: 44,
@@ -1001,11 +1113,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   contactsList: {
-    height: 300,
-    maxHeight: 320,
-    flexGrow: 0,
-    flexShrink: 1,
-    marginBottom: 12,
+    maxHeight: 380,
+    marginBottom: 14,
   },
   contactRow: {
     flexDirection: 'row',
@@ -1063,6 +1172,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   manualContainer: {
+    flexShrink: 1,
     paddingBottom: 16,
   },
   inputLabel: {

@@ -487,7 +487,7 @@ describe('StyleFleet iOS — Complete Automated End-to-End User Journey (Demo ID
   describe('Step 7: Settle Dues via SettleDueModal (Partial & Full)', () => {
     it('performs partial due payment and keeps remaining due intact (not zeroed out)', async () => {
       // Customer has ₹1,500 due
-      const custId = 'cust_due_test';
+      const custId = '00000000-0000-4000-8000-000000000001';
       const initialCust: Customer = {
         id: custId,
         shop_id: DEMO_SHOP_ID,
@@ -531,13 +531,13 @@ describe('StyleFleet iOS — Complete Automated End-to-End User Journey (Demo ID
       expect(remainingDue).toBe(50000); // exactly ₹500 remains!
 
       const reloaded = (await (customerRepository as any).getCachedCustomers(DEMO_SHOP_ID))?.find(
-        (c: Customer) => c.id === custId
+        (c: Customer) => c.phone === '9845099887'
       );
       expect(reloaded?.outstanding_due_minor).toBe(50000);
     });
 
     it('settles remaining due in full and marks customer debt-free', async () => {
-      const custId = 'cust_due_test';
+      const custId = '00000000-0000-4000-8000-000000000001';
       const initialCust: Customer = {
         id: custId,
         shop_id: DEMO_SHOP_ID,
@@ -579,7 +579,7 @@ describe('StyleFleet iOS — Complete Automated End-to-End User Journey (Demo ID
 
       expect(remainingDue).toBe(0);
       const reloaded = (await (customerRepository as any).getCachedCustomers(DEMO_SHOP_ID))?.find(
-        (c: Customer) => c.id === custId
+        (c: Customer) => c.phone === '9845099887'
       );
       expect(reloaded?.outstanding_due_minor).toBe(0);
     });
@@ -741,10 +741,10 @@ describe('StyleFleet iOS — Complete Automated End-to-End User Journey (Demo ID
 
       expect(html).toContain('StyleFleet Luxury Salon');
       expect(html).toContain('Hair Smoothening');
-      expect(html).toContain('PARTIALLY PAID');
-      expect(html).toContain('Amount Paid');
-      expect(html).toContain('Amount Due');
-      expect(html).toContain('9845012345');
+      expect(html).toContain('[PARTIAL]');
+      expect(html).toContain('Paid Amount');
+      expect(html).toContain('Balance Due');
+      expect(html).toContain('+91 98450 12345');
     });
   });
 

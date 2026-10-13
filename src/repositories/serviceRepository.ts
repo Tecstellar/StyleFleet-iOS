@@ -1,6 +1,8 @@
+import { findDuplicateService } from '../utils/serviceName';
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Service, ServiceCategory } from '../types/domain';
+import { assertSaved, isRemoteShop } from '../utils/persist';
 
 const STORAGE_KEY_SERVICES = '@salon_os_services_cache';
 const STORAGE_KEY_CATEGORIES = '@salon_os_service_categories_cache';
@@ -112,8 +114,8 @@ export class ServiceRepository {
       is_active: true,
     };
 
-    try {
-      const { data, error } = await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('service_categories')
         .insert({
           shop_id: shopId,
@@ -123,10 +125,9 @@ export class ServiceRepository {
         } as any)
         .select()
         .single();
-
-      if (error) {
-        console.error('Supabase error inserting category:', error);
-      } else if (data) {
+      assertSaved(result, 'the category');
+      const data = result.data;
+      if (data) {
         createdCat = {
           id: data.id,
           shop_id: data.shop_id,
@@ -135,8 +136,6 @@ export class ServiceRepository {
           is_active: data.is_active,
         };
       }
-    } catch (e) {
-      console.error('Exception inserting category into Supabase:', e);
     }
 
     const current = await this.getCategories(shopId);
@@ -146,13 +145,17 @@ export class ServiceRepository {
   }
 
   async updateCategory(shopId: string, categoryId: string, name: string): Promise<void> {
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('service_categories')
         .update({ name } as any)
-        .eq('id', categoryId);
-    } catch {
-      // ignore
+        .eq('id', categoryId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the category name');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This category was not found on the server, so the change was not saved.');
+      }
     }
 
     const current = await this.getCategories(shopId);
@@ -161,13 +164,17 @@ export class ServiceRepository {
   }
 
   async deleteCategory(shopId: string, categoryId: string): Promise<void> {
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('service_categories')
         .update({ is_active: false } as any)
-        .eq('id', categoryId);
-    } catch {
-      // ignore
+        .eq('id', categoryId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the category removal');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This category was not found on the server, so it was not removed.');
+      }
     }
 
     const current = await this.getCategories(shopId);
@@ -259,14 +266,42 @@ export class ServiceRepository {
     return seeded;
   }
 
+  /** Reads a menu-card photo through the import-menu Edge Function (the AI key stays on the server). */
+  async extractMenuItems(
+    imageBase64: string
+  ): Promise<{ category: string; name: string; price: number }[]> {
+    const { data, error } = await supabase.functions.invoke('import-menu', {
+      body: { imageBase64, mimeType: 'image/jpeg' },
+    });
+    if (error) {
+      // Surface the function's own message when it sent one
+      let message = error.message;
+      try {
+        const ctx = (error as { context?: Response }).context;
+        const body = ctx ? await ctx.json() : null;
+        if (body?.error) message = body.error;
+      } catch {
+        // keep the generic message
+      }
+      throw new Error(message || 'Menu import failed');
+    }
+    return Array.isArray(data?.items) ? data.items : [];
+  }
+
   async addService(
     shopId: string,
     categoryName: string,
     name: string,
-    priceRupees: number
+    priceRupees: number,
+    durationMinutes: number = 30
   ): Promise<Service> {
     const trimmedCat = categoryName.trim();
     const trimmedName = name.trim();
+
+    const dup = findDuplicateService(await this.getServices(shopId), trimmedName);
+    if (dup) {
+      throw new Error(`"${dup.name}" already exists in ${dup.category_name || 'your price list'}.`);
+    }
 
     // Ensure category exists in Supabase
     let catId: string | null = null;
@@ -288,37 +323,34 @@ export class ServiceRepository {
       category_name: trimmedCat,
       name: trimmedName,
       price_minor: Math.round(priceRupees * 100),
-      duration_minutes: 30,
+      duration_minutes: durationMinutes,
       is_active: true,
     };
 
-    try {
+    if (isRemoteShop(shopId)) {
       const payload: any = {
         shop_id: shopId,
         name: trimmedName,
         price_minor: Math.round(priceRupees * 100),
-        duration_minutes: 30,
+        duration_minutes: durationMinutes,
         is_active: true,
       };
       if (catId) {
         payload.category_id = catId;
       }
 
-      const { data, error } = await supabase
+      const result = await supabase
         .from('services')
         .insert(payload)
         .select('*, service_categories(name)')
         .single();
-
-      if (error) {
-        console.error('Error inserting service into Supabase:', error);
-      } else if (data) {
+      assertSaved(result, 'the service');
+      const data = result.data;
+      if (data) {
         newService.id = data.id;
         newService.category_id = data.category_id;
         newService.category_name = (data.service_categories as any)?.name || trimmedCat;
       }
-    } catch (e) {
-      console.error('Exception inserting service into Supabase:', e);
     }
 
     const current = await this.getServices(shopId);
@@ -331,52 +363,65 @@ export class ServiceRepository {
     shopId: string,
     serviceId: string,
     updates: { name?: string; priceRupees?: number; categoryName?: string }
-  ): Promise<void> {
-    try {
-      const dbUpdates: any = {};
-      if (updates.name) dbUpdates.name = updates.name;
-      if (updates.priceRupees !== undefined) dbUpdates.price_minor = Math.round(updates.priceRupees * 100);
+  ): Promise<Service[]> {
+    const dbUpdates: any = {};
+    if (updates.name) dbUpdates.name = updates.name;
+    if (updates.priceRupees !== undefined) dbUpdates.price_minor = Math.round(updates.priceRupees * 100);
 
-      if (updates.categoryName) {
-        const cats = await this.getCategories(shopId);
-        const matched = cats.find((c) => c.name.toLowerCase() === updates.categoryName!.toLowerCase());
-        if (matched && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(matched.id)) {
-          dbUpdates.category_id = matched.id;
-        }
+    if (updates.categoryName) {
+      const cats = await this.getCategories(shopId);
+      const matched = cats.find((c) => c.name.toLowerCase() === updates.categoryName!.toLowerCase());
+      if (matched && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(matched.id)) {
+        dbUpdates.category_id = matched.id;
       }
-
-      await supabase
-        .from('services')
-        .update(dbUpdates)
-        .eq('id', serviceId);
-    } catch {
-      // ignore
     }
 
-    const current = await this.getServices(shopId);
-    const updated = current.map((s) => {
-      if (s.id !== serviceId) return s;
-      return {
-        ...s,
-        name: updates.name || s.name,
-        price_minor: updates.priceRupees !== undefined ? Math.round(updates.priceRupees * 100) : s.price_minor,
-        category_name: updates.categoryName || s.category_name,
-      };
-    });
+    // Saved on the server first; a rejected save throws so the phone never shows a change that was not kept
+    if (isRemoteShop(shopId) && Object.keys(dbUpdates).length > 0) {
+      const result = await supabase
+        .from('services')
+        .update(dbUpdates)
+        .eq('id', serviceId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the price list change');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This service was not found on the server, so the change was not saved.');
+      }
+    }
+
+    // The list was just loaded, so patch the saved copy instead of downloading every service again
+    const current = (await this.getCachedServices(shopId)) ?? (await this.getServices(shopId));
+    const updated = current
+      .map((s) => {
+        if (s.id !== serviceId) return s;
+        return {
+          ...s,
+          name: updates.name || s.name,
+          price_minor: updates.priceRupees !== undefined ? Math.round(updates.priceRupees * 100) : s.price_minor,
+          category_name: updates.categoryName || s.category_name,
+        };
+      })
+      .sort((a, b) => a.price_minor - b.price_minor); // same order getServices returns
     await this.cacheServices(shopId, updated);
+    return updated;
   }
 
   async removeService(shopId: string, serviceId: string): Promise<void> {
-    try {
-      await supabase
+    if (isRemoteShop(shopId)) {
+      const result = await supabase
         .from('services')
         .update({ is_active: false } as any)
-        .eq('id', serviceId);
-    } catch {
-      // local
+        .eq('id', serviceId)
+        .eq('shop_id', shopId)
+        .select('id');
+      assertSaved(result, 'the removal');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This service was not found on the server, so it was not removed.');
+      }
     }
 
-    const current = await this.getServices(shopId);
+    const current = (await this.getCachedServices(shopId)) ?? (await this.getServices(shopId));
     const updated = current.filter((s) => s.id !== serviceId);
     await this.cacheServices(shopId, updated);
   }
@@ -405,6 +450,8 @@ export class ServiceRepository {
 
     const createdServices: Service[] = [];
     for (const it of extractedItems) {
+      // Skip anything already in the price list (or repeated within the menu itself)
+      if (findDuplicateService([...(await this.getServices(shopId))], it.name)) continue;
       const s = await this.addService(shopId, it.category, it.name, it.priceRupees);
       createdServices.push(s);
     }
@@ -416,7 +463,7 @@ export class ServiceRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_SERVICES}_${shopId}`, JSON.stringify(services));
   }
 
-  private async getCachedServices(shopId: string): Promise<Service[] | null> {
+  async getCachedServices(shopId: string): Promise<Service[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_SERVICES}_${shopId}`);
       if (data) return JSON.parse(data);
@@ -430,7 +477,7 @@ export class ServiceRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_CATEGORIES}_${shopId}`, JSON.stringify(categories));
   }
 
-  private async getCachedCategories(shopId: string): Promise<ServiceCategory[] | null> {
+  async getCachedCategories(shopId: string): Promise<ServiceCategory[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_CATEGORIES}_${shopId}`);
       if (data) return JSON.parse(data);

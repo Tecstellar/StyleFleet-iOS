@@ -7,6 +7,7 @@ export type Period = 'Day' | 'Week' | 'Month';
 
 export type ScreenName =
   | 'splash'
+  | 'welcomeTour'
   | 'phone'
   | 'otp'
   | 'register'
@@ -27,7 +28,8 @@ export type ScreenName =
   | 'bulksent'
   | 'staff'
   | 'pricing'
-  | 'profile';
+  | 'profile'
+  | 'reports';
 
 export type MainTab = 'home' | 'customers' | 'sales' | 'accounts';
 
@@ -46,7 +48,36 @@ export interface Customer {
   last_visit_date: string | null;
   due_start_date?: string | null;
   created_at: string;
+  is_active?: boolean;
 }
+
+export interface StylistPermissions {
+  customers: boolean;
+  sales: boolean;
+  appointments: boolean;
+  expenses: boolean;
+  reports: boolean;
+  team: boolean;
+  reminders: boolean;
+  profile: boolean;
+  /** With `expenses` on: may also see expenses from before today. Off = today only. */
+  expensesHistory: boolean;
+  /** May send a bill to a customer (WhatsApp / PDF). */
+  shareBills: boolean;
+}
+
+export const DEFAULT_STYLIST_PERMISSIONS: StylistPermissions = {
+  customers: true,
+  sales: true,
+  appointments: true,
+  expenses: false,
+  reports: false,
+  team: false,
+  reminders: true,
+  profile: false,
+  expensesHistory: false,
+  shareBills: false,
+};
 
 export interface StaffMember {
   id: string;
@@ -55,6 +86,9 @@ export interface StaffMember {
   role: string;
   phone: string | null;
   is_active: boolean;
+  permissions?: StylistPermissions;
+  invitation_status?: 'not_invited' | 'invited' | 'active';
+  invited_at?: string | null;
   target_amount_minor: number;
   revenue_minor: number;
   service_count: number;
@@ -117,6 +151,12 @@ export interface Appointment {
   notes: string | null;
   amount_minor: number;
   created_at: string;
+  is_edited?: boolean;
+  edited_at?: string;
+  is_deleted?: boolean;
+  deleted_at?: string;
+  deleted_by_role?: 'owner' | 'stylist';
+  deleted_by_name?: string;
 }
 
 export interface BillItem {
@@ -140,6 +180,13 @@ export interface BillPayment {
   reference?: string;
 }
 
+export interface SocialLinks {
+  instagram?: string;
+  facebook?: string;
+  youtube?: string;
+  website?: string;
+}
+
 export interface Bill {
   id: string;
   shop_id: string;
@@ -152,6 +199,7 @@ export interface Bill {
   subtotal_minor: number;
   discount_minor: number;
   tax_minor: number;
+  tip_minor?: number;
   total_minor: number;
   paid_amount_minor?: number;
   due_amount_minor?: number;
@@ -161,6 +209,24 @@ export interface Bill {
   payment_method: string;
   items: BillItem[];
   payments?: BillPayment[];
+  deleted_at?: string | null;
+  deleted_by?: string;
+  deleted_by_role?: 'owner' | 'stylist';
+  pdf_url?: string | null;
+  is_edited?: boolean;
+  reminder_status?: 'Not Sent' | 'Sent' | 'Pending';
+  confirmation_status?: 'Pending' | 'Confirmed';
+}
+
+export type InvoiceNumberingMode = 'monthly' | 'yearly';
+
+export interface FestivalOfferTemplate {
+  id: string;
+  category: string;
+  title: string;
+  defaultOffer: string;
+  templateBody: string;
+  validityHint: string;
 }
 
 export interface Expense {
@@ -173,6 +239,10 @@ export interface Expense {
   payment_method: string;
   expense_date: string;
   created_at: string;
+  /** false = listed but not subtracted from profit. Missing means it counts. */
+  include_in_profit?: boolean;
+  /** Team member this expense is for (salary, advance...). null / missing = ordinary shop expense. */
+  staff_id?: string | null;
 }
 
 export interface ReminderItem {
@@ -188,6 +258,7 @@ export interface ReminderItem {
   customer_name?: string | null;
   customer_phone?: string | null;
   amount_minor?: number;
+  starts_at?: string;
 }
 
 export type SubscriptionStatus =
@@ -208,8 +279,8 @@ export interface SubscriptionRecord {
   trial_end_date: string | null;
   subscription_start_date: string | null;
   subscription_end_date: string | null;
-  cashfree_order_id?: string | null;
-  cashfree_payment_id?: string | null;
+  cashfree_order_id: string | null;
+  cashfree_payment_id: string | null;
   amount_minor: number;
   currency: string;
   created_at: string;
@@ -221,3 +292,4 @@ export type SubscriptionStateCategory =
   | 'TRIAL_EXPIRING_SOON'
   | 'TRIAL_EXPIRED'
   | 'ACTIVE_SUBSCRIPTION';
+

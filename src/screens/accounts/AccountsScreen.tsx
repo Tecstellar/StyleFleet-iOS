@@ -1,25 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Modal,
   TextInput,
   Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Linking,
+  Keyboard,
 } from 'react-native';
+import { Modal } from '../../components/common/KeyboardAwareModal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../theme/ThemeContext';
+import { GlassBackdrop } from '../../components/common/GlassBackdrop';
+import { getGlass } from '../../theme/glass';
 import { useLanguage } from '../../i18n/LanguageContext';
 import { SUPPORTED_LANGUAGES } from '../../i18n/translations';
-import { Period, Bill, Expense } from '../../types/domain';
+import { Period, Bill, Expense, SocialLinks, StylistPermissions } from '../../types/domain';
 import { financialService } from '../../services/financialService';
+import { fmt } from '../../i18n/format';
 import { inrFromMinor } from '../../utils/format';
 import { supportRepository, SupportMessageAnswer } from '../../repositories/supportRepository';
+import { shopRepository } from '../../repositories/shopRepository';
+import { appReviewService } from '../../services/appReviewService';
 import {
   WalletIcon,
   CalendarIcon,
@@ -28,18 +35,37 @@ import {
   UsersIcon,
   TagIcon,
   StoreIcon,
+  ChartIcon,
+  StarIcon,
+  SparklesIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  MoreVerticalIcon,
+  EditIcon,
+  TrashIcon,
+  InstagramIcon,
+  FacebookIcon,
+  YouTubeIcon,
+  WebsiteIcon,
 } from '../../components/common/SvgIcons';
+import { ChangePhoneModal } from '../../components/accounts/ChangePhoneModal';
 import { radii } from '../../theme/spacing';
-import { ManagePlansCard } from '../../components/subscription/ManagePlansCard';
-import { formatPriceInRupees } from '../../config/planConfig';
+import { PlanStatusCard } from '../../components/subscription/PlanStatusCard';
+import { usePullRefresh } from '../../hooks/usePullRefresh';
 
 interface AccountsScreenProps {
+  onRefresh?: () => Promise<void>;
   openRemindersCount: number;
   bills?: Bill[];
   expenses?: Expense[];
   shopId?: string;
   shopName?: string;
   userPhone?: string;
+  userId?: string;
+  currentUserRole?: 'owner' | 'stylist';
+  stylistPermissions?: StylistPermissions | null;
+  initialSocialLinks?: SocialLinks | null;
+  onUpdateSocialLinks?: (links: SocialLinks) => Promise<void>;
   onNavigate: (
     screen:
       | 'expenses'
@@ -49,22 +75,43 @@ interface AccountsScreenProps {
       | 'staff'
       | 'pricing'
       | 'profile'
+      | 'reports'
   ) => void;
+  onUpgradePlan?: () => void;
+  /** Plan status for the "Your plan" card (owners only) */
+  isPro?: boolean;
+  /** How many sales the salon has created in total (what the free limit counts, including deleted ones) */
+  planSalesCount?: number;
+  /** Free-plan sales limit for this salon */
+  freeSalesLimit?: number;
   onAccountDeleted?: () => void;
   onSignOut?: () => void;
+  onPhoneUpdated?: (newPhone: string) => void;
 }
 
 export const AccountsScreen = ({
+  onRefresh,
   openRemindersCount,
   bills = [],
   expenses = [],
   shopId = '',
   shopName = 'My Salon',
   userPhone = '',
+  userId,
+  currentUserRole = 'owner',
+  stylistPermissions = null,
+  initialSocialLinks = null,
+  onUpdateSocialLinks,
   onNavigate,
+  onUpgradePlan,
+  isPro = false,
+  planSalesCount = 0,
+  freeSalesLimit,
   onAccountDeleted,
   onSignOut,
+  onPhoneUpdated,
 }: AccountsScreenProps) => {
+  const pullRefresh = usePullRefresh(onRefresh);
   const { colors } = useTheme();
   const { language, setLanguage, t } = useLanguage();
   const [period, setPeriod] = useState<Period>('Day');
@@ -75,9 +122,143 @@ export const AccountsScreen = ({
   const [showFaqModal, setShowFaqModal] = useState(false);
   const [showSupportModal, setShowSupportModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showChangePhoneModal, setShowChangePhoneModal] = useState(false);
+  const [activeUserPhone, setActiveUserPhone] = useState(userPhone);
+
+  useEffect(() => {
+    setActiveUserPhone(userPhone);
+  }, [userPhone]);
+
   const [selectedDeleteReason, setSelectedDeleteReason] = useState('Closing or Pausing Salon Business');
   const [deleteCustomNote, setDeleteCustomNote] = useState('');
   const [isDeleting, setIsDeleting] = useState(false);
+  const [accountMgmtExpanded, setAccountMgmtExpanded] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => setKeyboardHeight(e.endCoordinates.height)
+    );
+    const hideSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboardHeight(0)
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const handleOpenPrivacyPolicy = async () => {
+    const url = 'https://www.tecstellar.com/privacy-policy';
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (canOpen) {
+        await Linking.openURL(url);
+      } else {
+        setShowPrivacyModal(true);
+      }
+    } catch {
+      setShowPrivacyModal(true);
+    }
+  };
+
+  // Social Media Links State (Moved to Settings & Help)
+  const [socialLinks, setSocialLinks] = useState<SocialLinks>(initialSocialLinks || {});
+  const [showSocialModal, setShowSocialModal] = useState(false);
+  const [editingPlatform, setEditingPlatform] = useState<keyof SocialLinks | null>(null);
+  const [platformUrlInput, setPlatformUrlInput] = useState('');
+  const [isSavingSocial, setIsSavingSocial] = useState(false);
+  const [socialActionMenuPlatform, setSocialActionMenuPlatform] = useState<keyof SocialLinks | null>(null);
+
+  useEffect(() => {
+    if (initialSocialLinks) {
+      setSocialLinks(initialSocialLinks);
+    }
+  }, [initialSocialLinks]);
+
+  const activeSocialCount = Object.values(socialLinks || {}).filter(
+    (v) => typeof v === 'string' && (v as string).trim().length > 0
+  ).length;
+
+  const handleStartEditLink = (platform: keyof SocialLinks, currentUrl: string) => {
+    setEditingPlatform(platform);
+    setPlatformUrlInput(currentUrl);
+  };
+
+  const handleSaveSingleLink = async (platform: keyof SocialLinks, url: string) => {
+    if (!shopId) return;
+    const trimmed = url.trim();
+    if (!trimmed) {
+      Alert.alert('URL Required', 'Please enter a valid link/URL.');
+      return;
+    }
+    setIsSavingSocial(true);
+    try {
+      const updated: SocialLinks = { ...socialLinks, [platform]: trimmed };
+      await shopRepository.updateShop(shopId, {
+        social_links: updated as any,
+      });
+      setSocialLinks(updated);
+      if (onUpdateSocialLinks) {
+        await onUpdateSocialLinks(updated);
+      }
+      setEditingPlatform(null);
+      setPlatformUrlInput('');
+      Alert.alert('Link Saved', `${platform.toUpperCase()} link has been saved to database.`);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Could not save link');
+    } finally {
+      setIsSavingSocial(false);
+    }
+  };
+
+  const handleDeleteSingleLink = (platform: keyof SocialLinks) => {
+    if (!shopId) return;
+    Alert.alert(
+      t('deleteLink', 'Delete Link'),
+      t('confirmDeleteLink', 'Are you sure you want to delete this link?'),
+      [
+        { text: t('cancel', 'Cancel'), style: 'cancel' },
+        {
+          text: t('delete', 'Delete'),
+          style: 'destructive',
+          onPress: async () => {
+            setIsSavingSocial(true);
+            try {
+              const updated: SocialLinks = { ...socialLinks };
+              delete updated[platform];
+              await shopRepository.updateShop(shopId, {
+                social_links: updated as any,
+              });
+              setSocialLinks(updated);
+              if (onUpdateSocialLinks) {
+                await onUpdateSocialLinks(updated);
+              }
+              if (editingPlatform === platform) {
+                setEditingPlatform(null);
+                setPlatformUrlInput('');
+              }
+              Alert.alert('Link Deleted', t('linkDeleted', 'Link deleted successfully'));
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Could not delete link');
+            } finally {
+              setIsSavingSocial(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleAppReview = async () => {
+    try {
+      await appReviewService.openAppReview();
+    } catch {
+      Alert.alert('Store Notice', 'Opening StyleFleet store listing...');
+    }
+  };
 
   // Support ticket form
   const [supportMessage, setSupportMessage] = useState('');
@@ -127,6 +308,9 @@ export const AccountsScreen = ({
   }, [showSupportModal, shopId]);
 
   const pnl = financialService.getPnLMetrics(period, bills, expenses);
+  const totalSalesCount = useMemo(() => {
+    return bills.filter((b) => !(b as any).is_deleted).length;
+  }, [bills]);
 
   const deleteWarningText = t(
     'deleteAccountWarning',
@@ -138,52 +322,72 @@ export const AccountsScreen = ({
       id: 'expenses' as const,
       label: t('expenses'),
       sub: t('expensesSub', 'Log & categorise'),
-      icon: <WalletIcon size={19} color={colors.accent} />,
+      icon: <WalletIcon size={20} color={colors.accent} />,
       badge: '',
+      moduleKey: 'expenses' as const,
     },
     {
       id: 'appointments' as const,
       label: t('appointments'),
       sub: t('appointmentsSub', 'Day agenda'),
-      icon: <CalendarIcon size={19} color={colors.accent} />,
+      icon: <CalendarIcon size={20} color={colors.accent} />,
       badge: '',
+      moduleKey: 'appointments' as const,
     },
     {
       id: 'reminders' as const,
       label: t('reminders'),
       sub: t('remindersSub', 'Auto & manual'),
-      icon: <BellIcon size={19} color={colors.accent} />,
+      icon: <BellIcon size={20} color={colors.accent} />,
       badge: openRemindersCount > 0 ? String(openRemindersCount) : '',
+      moduleKey: 'reminders' as const,
     },
     {
       id: 'bulk' as const,
       label: t('whatsApp', 'WhatsApp'),
-      sub: t('whatsAppSub', 'Offers & nudges'),
-      icon: <ChatIcon size={19} color={colors.accent} />,
+      sub: t('whatsAppSub', 'Offers & ads'),
+      icon: <ChatIcon size={20} color={colors.accent} />,
       badge: '',
+      moduleKey: 'reminders' as const,
     },
     {
       id: 'staff' as const,
       label: t('team'),
       sub: t('staffSub', 'Who delivers what'),
-      icon: <UsersIcon size={19} color={colors.accent} />,
+      icon: <UsersIcon size={20} color={colors.accent} />,
       badge: '',
+      moduleKey: 'team' as const,
     },
     {
       id: 'pricing' as const,
-      label: t('priceAndOffers'),
-      sub: t('pricingSub', 'Add, delete, discount'),
-      icon: <TagIcon size={19} color={colors.accent} />,
+      label: t('priceList', 'Price List'),
+      sub: t('priceListSub', 'Manage services & pricing'),
+      icon: <TagIcon size={20} color={colors.accent} />,
       badge: '',
+      moduleKey: null,
+    },
+    {
+      id: 'reports' as const,
+      label: t('reports', 'Reports'),
+      sub: t('reportsSub', 'Export PDF & Excel'),
+      icon: <ChartIcon size={20} color={colors.accent} />,
+      badge: '',
+      moduleKey: 'reports' as const,
     },
     {
       id: 'profile' as const,
       label: t('shopProfile'),
       sub: t('profileSub', 'Logo, theme, GST'),
-      icon: <StoreIcon size={19} color={colors.accent} />,
+      icon: <StoreIcon size={20} color={colors.accent} />,
       badge: '',
+      moduleKey: 'profile' as const,
     },
-  ];
+  ].filter((tool) => {
+    if (currentUserRole === 'stylist' && stylistPermissions && tool.moduleKey) {
+      return stylistPermissions[tool.moduleKey] !== false;
+    }
+    return true;
+  });
 
   const handleSendSupportTicket = async () => {
     if (!supportMessage.trim()) {
@@ -218,8 +422,12 @@ export const AccountsScreen = ({
     month: 'short',
   });
 
+  const cardBorderColor = colors.isDark ? 'rgba(255, 255, 255, 0.16)' : 'rgba(0, 0, 0, 0.12)';
+  const cardBorderWidth = colors.isDark ? 1.2 : 1.5;
+
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.bg }]}>
+      <GlassBackdrop isDark={colors.isDark} />
       <View style={styles.header}>
         <View style={styles.headerTitleRow}>
           <Text style={[styles.title, { color: colors.text }]}>{t('accounts')}</Text>
@@ -252,7 +460,7 @@ export const AccountsScreen = ({
                     },
                   ]}
                 >
-                  {p === 'Day' ? t('day') : p === 'Week' ? t('week') : t('month')}
+                  {p === 'Day' ? t('today', 'Today') : p === 'Week' ? t('week') : t('month')}
                 </Text>
               </TouchableOpacity>
             );
@@ -260,7 +468,7 @@ export const AccountsScreen = ({
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false} refreshControl={pullRefresh}>
         {/* Net Profit Summary */}
         <View style={styles.pnlHeaderRow}>
           <View>
@@ -285,9 +493,18 @@ export const AccountsScreen = ({
 
         {/* Income vs Expenses Cards */}
         <View style={styles.twoColCards}>
-          <View style={[styles.statCard, { backgroundColor: colors.surface }]}>
+          <View
+            style={[
+              styles.statCard,
+              {
+                ...getGlass(colors.isDark).card,
+                borderColor: cardBorderColor,
+                borderWidth: cardBorderWidth,
+              },
+            ]}
+          >
             <Text style={[styles.statLabel, { color: colors.textDim }]}>{t('totalIncome')}</Text>
-            <Text style={[styles.statValue, { color: colors.text }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: colors.text }]}>
               {inrFromMinor(pnl.income_minor)}
             </Text>
             <Text style={[styles.statSub, { color: colors.textMuted }]}>
@@ -295,20 +512,32 @@ export const AccountsScreen = ({
             </Text>
           </View>
 
-          <View style={[styles.statCard, { backgroundColor: colors.surface }]}>
+          <View
+            style={[
+              styles.statCard,
+              {
+                ...getGlass(colors.isDark).card,
+                borderColor: cardBorderColor,
+                borderWidth: cardBorderWidth,
+              },
+            ]}
+          >
             <Text style={[styles.statLabel, { color: colors.textDim }]}>{t('totalExpenses')}</Text>
-            <Text style={[styles.statValue, { color: colors.error }]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.statValue, { color: colors.error }]}>
               {inrFromMinor(pnl.expense_minor)}
             </Text>
             <Text style={[styles.statSub, { color: colors.textMuted }]}>
               {expenses.length} entries
+              {pnl.excluded_minor > 0
+                ? ` · ${fmt(t('exNotCounted', '{amt} not counted in profit'), { amt: inrFromMinor(pnl.excluded_minor) })}`
+                : ''}
             </Text>
           </View>
         </View>
 
         {/* Where the money went (Expenses breakdown) */}
         {pnl.categories.length > 0 ? (
-          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+          <View style={[styles.card, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
             <Text style={[styles.cardHeader, { color: colors.textDim }]}>
               {t('whereMoneyWent', 'WHERE THE MONEY WENT')}
             </Text>
@@ -362,25 +591,18 @@ export const AccountsScreen = ({
           </View>
         ) : null}
 
+        {/* Your plan: owners only, since only the owner can upgrade */}
+        {onUpgradePlan && currentUserRole !== 'stylist' ? (
+          <PlanStatusCard isPro={isPro} totalSalesCount={planSalesCount} freeSalesLimit={freeSalesLimit} onUpgrade={onUpgradePlan} />
+        ) : null}
+
         {/* Manage Tools Header */}
         <Text style={[styles.manageTitle, { color: colors.textDim }]}>
           {t('operationsAndTools', 'OPERATIONS & TOOLS')}
         </Text>
 
-        {/* FREE TRIAL & PLAN MANAGEMENT */}
-        <ManagePlansCard
-          shopId={shopId || ''}
-          ownerName={shopName || ''}
-          phone={userPhone || ''}
-          onProceedPlan={(plan) => {
-            const template = `Hi StyleFleet, I need this subscription: ${plan.name} (${formatPriceInRupees(plan.priceInRupees)} / ${plan.durationDays} days). Please activate it for my salon.`;
-            setSupportMessage(template);
-            setSupportContact(userPhone || '');
-            setShowSupportModal(true);
-          }}
-        />
 
-        {/* 2-Column Tools Grid */}
+        {/* Operations & Tools: Compact 4x2 Grid (Wordings on Left, Icon on Right) */}
         <View style={styles.toolsGrid}>
           {tools.map((t) => (
             <TouchableOpacity
@@ -389,30 +611,32 @@ export const AccountsScreen = ({
               onPress={() => onNavigate(t.id)}
               style={[
                 styles.toolCard,
-                { backgroundColor: colors.surface, borderColor: colors.divider },
+                {
+                  ...getGlass(colors.isDark).card,
+                  borderColor: cardBorderColor,
+                  borderWidth: cardBorderWidth,
+                },
               ]}
             >
-              <View style={styles.toolIconRow}>
+              <View
+                style={[
+                  styles.toolIconContainer,
+                  {
+                    backgroundColor: colors.isDark ? 'rgba(217, 119, 6, 0.12)' : 'rgba(217, 119, 6, 0.08)',
+                    borderColor: colors.isDark ? 'rgba(217, 119, 6, 0.25)' : 'rgba(217, 119, 6, 0.18)',
+                  },
+                ]}
+              >
                 {t.icon}
                 {t.badge ? (
-                  <View style={[styles.toolBadge, { backgroundColor: colors.accent900 }]}>
-                    <Text style={[styles.toolBadgeText, { color: colors.accent200 }]}>
-                      {t.badge}
-                    </Text>
+                  <View style={[styles.toolBadgeFloat, { backgroundColor: colors.accent }]}>
+                    <Text style={styles.toolBadgeFloatText}>{t.badge}</Text>
                   </View>
                 ) : null}
               </View>
-              <View style={{ marginTop: 7, flex: 1 }}>
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.82}
-                  style={[styles.toolTitle, { color: colors.text }]}
-                >
-                  {t.label}
-                </Text>
-                <Text numberOfLines={1} style={[styles.toolSub, { color: colors.textDim }]}>{t.sub}</Text>
-              </View>
+              <Text numberOfLines={2} style={[styles.toolTitle, { color: colors.text, flex: 1 }]}>
+                {t.label}
+              </Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -424,7 +648,7 @@ export const AccountsScreen = ({
           {t('settingsAndHelp')}
         </Text>
 
-        <View style={[styles.settingsBox, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+        <View style={[styles.settingsBox, { ...getGlass(colors.isDark).card, borderWidth: 1 }]}>
           {/* App Language */}
           <TouchableOpacity
             style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
@@ -432,41 +656,45 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>{t('appLanguage')}</Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.accent }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>{t('appLanguage')}</Text>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.accent }]}>
                 {SUPPORTED_LANGUAGES.find((l) => l.code === language)?.nativeLabel || 'English'}
               </Text>
             </View>
             <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
           </TouchableOpacity>
 
-          {/* Privacy Policy */}
+          {/* Social Media Links */}
           <TouchableOpacity
             style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
-            onPress={() => setShowPrivacyModal(true)}
+            onPress={() => setShowSocialModal(true)}
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>{t('privacyPolicy')}</Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                {t('privacyPolicySub', 'Customer data privacy and security terms')}
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>
+                {t('socialLinks', 'Social Media Links')}
+              </Text>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: activeSocialCount > 0 ? colors.accent : colors.textDim }]}>
+                {activeSocialCount > 0
+                  ? `${activeSocialCount} ${t('linksAdded', 'links added')}`
+                  : t('socialLinksSub', 'Add Instagram, Facebook, YouTube, Website')}
               </Text>
             </View>
             <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
           </TouchableOpacity>
 
-          {/* FAQ */}
+          {/* App Review & Feedback */}
           <TouchableOpacity
             style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
-            onPress={() => setShowFaqModal(true)}
+            onPress={handleAppReview}
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
-                {t('faq')}
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>
+                {t('appReview', 'Rate & Review StyleFleet')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                {t('faqSub', 'Billing, backups, GST and staff queries')}
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+                {t('appReviewSub', 'Share your experience on Play Store / App Store')}
               </Text>
             </View>
             <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
@@ -479,10 +707,10 @@ export const AccountsScreen = ({
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text }]}>
                 {t('helpDesk')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.textDim }]}>
                 {t('helpDeskSub', 'Submit an inquiry or view answers from support')}
               </Text>
             </View>
@@ -491,54 +719,137 @@ export const AccountsScreen = ({
             </View>
           </TouchableOpacity>
 
-          {/* Sign Out (Moved here from Shop Profile as instructed) */}
-          {onSignOut && (
-            <TouchableOpacity
-              style={[styles.settingsRow, { borderBottomColor: colors.divider }]}
-              onPress={() => {
-                Alert.alert(
-                  t('signOut', 'Sign out'),
-                  'Are you sure you want to sign out from your salon account?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    {
-                      text: t('signOut', 'Sign out'),
-                      style: 'destructive',
-                      onPress: onSignOut,
-                    },
-                  ]
-                );
-              }}
-              activeOpacity={0.7}
-            >
-              <View style={{ flex: 1, paddingRight: 8 }}>
-                <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.text }]}>
-                  🚪 {t('signOut', 'Sign out')}
-                </Text>
-                <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                  {t('signOutSub', 'Exit session on this device')}
-                </Text>
-              </View>
-              <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Permanently Delete Account */}
+          {/* Expandable Account Management Section */}
           <TouchableOpacity
-            style={[styles.settingsRow, { borderBottomWidth: 0, backgroundColor: 'rgba(255, 59, 48, 0.05)' }]}
-            onPress={() => setShowDeleteModal(true)}
+            style={[
+              styles.settingsRow,
+              {
+                borderBottomColor: colors.divider,
+                borderBottomWidth: accountMgmtExpanded ? 0 : 1,
+              },
+            ]}
+            onPress={() => setAccountMgmtExpanded((prev) => !prev)}
             activeOpacity={0.7}
           >
             <View style={{ flex: 1, paddingRight: 8 }}>
-              <Text numberOfLines={1} style={[styles.settingsRowTitle, { color: colors.error }]}>
-                🗑 {t('deleteAccount', 'Permanently Delete Account')}
+              <Text numberOfLines={2} style={[styles.settingsRowTitle, { color: colors.text, fontWeight: '600' }]}>
+                {t('accountManagement', 'Account Management')}
               </Text>
-              <Text numberOfLines={1} style={[styles.settingsRowSub, { color: colors.textDim }]}>
-                {t('deleteAccountSub', 'Wipe salon database records and close account')}
+              <Text numberOfLines={2} style={[styles.settingsRowSub, { color: colors.textDim }]}>
+                {t('accountManagementSub', 'Privacy policy, FAQ, sign out & account closure')}
               </Text>
             </View>
-            <Text style={{ color: colors.error, fontSize: 18 }}>›</Text>
+            {accountMgmtExpanded ? (
+              <ChevronDownIcon size={18} color={colors.accent} />
+            ) : (
+              <ChevronRightIcon size={18} color={colors.accent} />
+            )}
           </TouchableOpacity>
+
+          {/* Nested Account Management Items */}
+          {accountMgmtExpanded && (
+            <View style={[styles.nestedAccountBox, { backgroundColor: colors.bg, borderColor: colors.divider }]}>
+              {/* 1. Privacy Policy (In-App) */}
+              <TouchableOpacity
+                style={[styles.nestedRow, { borderBottomColor: colors.divider }]}
+                onPress={() => setShowPrivacyModal(true)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                    {t('privacyPolicy', 'Privacy Policy')}
+                  </Text>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                    {t('privacyPolicySub', 'Customer data privacy and security terms')}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.accent, fontSize: 16 }}>›</Text>
+              </TouchableOpacity>
+
+              {/* 2. FAQ */}
+              <TouchableOpacity
+                style={[styles.nestedRow, { borderBottomColor: colors.divider }]}
+                onPress={() => setShowFaqModal(true)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                    {t('faq', 'Frequently Asked Questions (FAQ)')}
+                  </Text>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                    {t('faqSub', 'Billing, backups, GST and staff queries')}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
+              </TouchableOpacity>
+
+              {/* Change Phone Number */}
+              <TouchableOpacity
+                style={[styles.nestedRow, { borderBottomColor: colors.divider }]}
+                onPress={() => setShowChangePhoneModal(true)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                    {t('changePhoneNumber', 'Change Phone Number')}
+                  </Text>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                    {t('changePhoneNumberSub', 'Verify with OTP and update account mobile number')}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
+              </TouchableOpacity>
+
+              {/* 3. Sign Out */}
+              {onSignOut && (
+                <TouchableOpacity
+                  style={[styles.nestedRow, { borderBottomColor: colors.divider }]}
+                  onPress={() => {
+                    Alert.alert(
+                      t('signOut', 'Sign out'),
+                      'Are you sure you want to sign out from your salon account?',
+                      [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: t('signOut', 'Sign out'),
+                          style: 'destructive',
+                          onPress: onSignOut,
+                        },
+                      ]
+                    );
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={{ flex: 1, paddingRight: 8 }}>
+                    <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.text }]}>
+                      {t('signOut', 'Sign out')}
+                    </Text>
+                    <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                      {t('signOutSub', 'Exit session on this device')}
+                    </Text>
+                  </View>
+                  <Text style={{ color: colors.accent, fontSize: 18 }}>›</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* 4. Permanently Delete Account */}
+              <TouchableOpacity
+                style={[styles.nestedRow, { borderBottomWidth: 0, backgroundColor: 'rgba(255, 59, 48, 0.05)' }]}
+                onPress={() => setShowDeleteModal(true)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1, paddingRight: 8 }}>
+                  <Text numberOfLines={3} style={[styles.nestedRowTitle, { color: colors.error }]}>
+                    {t('deleteAccount', 'Permanently Delete Account')}
+                  </Text>
+                  <Text numberOfLines={3} style={[styles.nestedRowSub, { color: colors.textDim }]}>
+                    {t('deleteAccountSub', 'Wipe salon database records and close account')}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.error, fontSize: 18 }}>›</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         <View style={{ height: 40 }} />
@@ -635,8 +946,13 @@ export const AccountsScreen = ({
               onPress={() => setShowSupportModal(false)}
             />
             <ScrollView
-              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              contentContainerStyle={{
+                flexGrow: 1,
+                justifyContent: 'center',
+                paddingBottom: Math.max(20, keyboardHeight + 20),
+              }}
               keyboardShouldPersistTaps="handled"
+              automaticallyAdjustKeyboardInsets={true}
             >
               <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
                 <View style={styles.modalHeader}>
@@ -795,6 +1111,339 @@ export const AccountsScreen = ({
       </Modal>
 
       {/* ---------------------------------------------------- */}
+      {/* SOCIAL MEDIA LINKS MODAL (Settings & Help)           */}
+      {/* ---------------------------------------------------- */}
+      <Modal visible={showSocialModal} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1 }}
+        >
+          <View style={styles.modalOverlay}>
+            <TouchableOpacity
+              style={StyleSheet.absoluteFill}
+              activeOpacity={1}
+              onPress={() => {
+                setShowSocialModal(false);
+                setEditingPlatform(null);
+                setSocialActionMenuPlatform(null);
+              }}
+            />
+            <ScrollView
+              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              keyboardShouldPersistTaps="handled"
+            >
+              <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <View style={styles.modalHeader}>
+                  <Text style={[styles.modalTitle, { color: colors.text }]}>
+                    {t('socialLinks', 'Social Media Links')}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowSocialModal(false);
+                      setEditingPlatform(null);
+                      setSocialActionMenuPlatform(null);
+                    }}
+                  >
+                    <Text style={{ color: colors.accent, fontSize: 16 }}>{t('done', 'Done')}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <Text style={[styles.modalSub, { color: colors.textDim }]}>
+                  {t(
+                    'socialLinksSub',
+                    'Add your salon’s social links to automatically feature them on customer WhatsApp bills. All fields are optional.'
+                  )}
+                </Text>
+
+                {/* Platforms List */}
+                {[
+                  { key: 'instagram' as const, label: 'Instagram', placeholder: 'https://instagram.com/yoursalon' },
+                  { key: 'facebook' as const, label: 'Facebook', placeholder: 'https://facebook.com/yoursalon' },
+                  { key: 'youtube' as const, label: 'YouTube', placeholder: 'https://youtube.com/@yoursalon' },
+                  { key: 'website' as const, label: 'Website', placeholder: 'https://yoursalon.com' },
+                ].map((item) => {
+                  const currentLink = socialLinks[item.key] || '';
+                  const hasLink = currentLink.trim().length > 0;
+                  const isEditingThis = editingPlatform === item.key;
+
+                  return (
+                    <View
+                      key={item.key}
+                      style={{
+                        backgroundColor: colors.bg,
+                        borderRadius: radii.md,
+                        borderWidth: 1,
+                        borderColor: isEditingThis ? colors.accent : colors.divider,
+                        padding: 12,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, marginRight: 8 }}>
+                          <View
+                            style={{
+                              width: 34,
+                              height: 34,
+                              borderRadius: 17,
+                              ...getGlass(colors.isDark).card,
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                              marginRight: 10,
+                              borderWidth: 1,
+                              borderColor: colors.divider,
+                            }}
+                          >
+                            {item.key === 'instagram' && <InstagramIcon size={18} color="#E1306C" />}
+                            {item.key === 'facebook' && <FacebookIcon size={18} color="#1877F2" />}
+                            {item.key === 'youtube' && <YouTubeIcon size={18} color="#FF0000" />}
+                            {item.key === 'website' && <WebsiteIcon size={18} color="#0284C7" />}
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
+                              {item.label}
+                            </Text>
+                            {hasLink && !isEditingThis ? (
+                              <Text numberOfLines={1} style={{ color: colors.textDim, fontSize: 12, marginTop: 2 }}>
+                                {currentLink}
+                              </Text>
+                            ) : null}
+                          </View>
+                        </View>
+
+                        {/* Actions for configured link: Three-vertical-dots button */}
+                        {hasLink && !isEditingThis ? (
+                          <TouchableOpacity
+                            activeOpacity={0.7}
+                            onPress={() => setSocialActionMenuPlatform(item.key)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            style={{
+                              padding: 7,
+                              borderRadius: radii.sm,
+                              backgroundColor: colors.surface,
+                              borderWidth: 1,
+                              borderColor: colors.divider,
+                              justifyContent: 'center',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <MoreVerticalIcon size={18} color={colors.text} />
+                          </TouchableOpacity>
+                        ) : !hasLink && !isEditingThis ? (
+                          <TouchableOpacity
+                            onPress={() => {
+                              setSocialActionMenuPlatform(null);
+                              handleStartEditLink(item.key, '');
+                            }}
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 5,
+                              borderRadius: radii.sm,
+                              backgroundColor: colors.accent900,
+                              borderWidth: 1,
+                              borderColor: colors.accent,
+                            }}
+                          >
+                            <Text style={{ color: colors.accent, fontSize: 12, fontWeight: '600' }}>
+                              {t('addLink', '+ Add Link')}
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+
+                      {/* Editing input box */}
+                      {isEditingThis ? (
+                        <View style={{ marginTop: 10 }}>
+                          <TextInput
+                            style={[
+                              styles.modalInput,
+                              {
+                                backgroundColor: colors.surface,
+                                borderColor: colors.divider,
+                                color: colors.text,
+                                marginBottom: 10,
+                              },
+                            ]}
+                            placeholder={item.placeholder}
+                            placeholderTextColor={colors.textDim}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            value={platformUrlInput}
+                            onChangeText={setPlatformUrlInput}
+                            autoFocus
+                          />
+                          <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                            <TouchableOpacity
+                              onPress={() => {
+                                setEditingPlatform(null);
+                                setPlatformUrlInput('');
+                              }}
+                              style={{
+                                paddingHorizontal: 14,
+                                paddingVertical: 7,
+                                borderRadius: radii.sm,
+                                borderWidth: 1,
+                                borderColor: colors.divider,
+                              }}
+                            >
+                              <Text style={{ color: colors.textDim, fontSize: 13, fontWeight: '500' }}>
+                                {t('cancel', 'Cancel')}
+                              </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                              onPress={() => handleSaveSingleLink(item.key, platformUrlInput)}
+                              disabled={isSavingSocial}
+                              style={{
+                                paddingHorizontal: 16,
+                                paddingVertical: 7,
+                                borderRadius: radii.sm,
+                                backgroundColor: colors.accent,
+                              }}
+                            >
+                              {isSavingSocial ? (
+                                <ActivityIndicator color="#000" size="small" />
+                              ) : (
+                                <Text style={{ color: '#000', fontSize: 13, fontWeight: '700' }}>
+                                  {t('save', 'Save')}
+                                </Text>
+                              )}
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            {/* Three Vertical Dots Action Menu Popup for Edit / Delete */}
+            {socialActionMenuPlatform && (
+              <View style={[StyleSheet.absoluteFill, { zIndex: 999 }]}>
+                <TouchableOpacity
+                  style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.55)' }]}
+                  activeOpacity={1}
+                  onPress={() => setSocialActionMenuPlatform(null)}
+                />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                  <View
+                    style={{
+                      width: '100%',
+                      maxWidth: 320,
+                      backgroundColor: colors.surface,
+                      borderRadius: radii.lg,
+                      borderWidth: 1,
+                      borderColor: colors.divider,
+                      padding: 16,
+                      shadowColor: '#000',
+                      shadowOffset: { width: 0, height: 4 },
+                      shadowOpacity: 0.3,
+                      shadowRadius: 10,
+                      elevation: 10,
+                    }}
+                  >
+                    <View
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        marginBottom: 12,
+                        paddingBottom: 10,
+                        borderBottomWidth: 1,
+                        borderBottomColor: colors.divider,
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                        <View
+                          style={{
+                            width: 28,
+                            height: 28,
+                            borderRadius: 14,
+                            backgroundColor: colors.bg,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                          }}
+                        >
+                          {socialActionMenuPlatform === 'instagram' && <InstagramIcon size={16} color="#E1306C" />}
+                          {socialActionMenuPlatform === 'facebook' && <FacebookIcon size={16} color="#1877F2" />}
+                          {socialActionMenuPlatform === 'youtube' && <YouTubeIcon size={16} color="#FF0000" />}
+                          {socialActionMenuPlatform === 'website' && <WebsiteIcon size={16} color="#0284C7" />}
+                        </View>
+                        <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', textTransform: 'capitalize' }}>
+                          {socialActionMenuPlatform}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => setSocialActionMenuPlatform(null)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Text style={{ color: colors.textDim, fontSize: 14 }}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <Text numberOfLines={1} style={{ color: colors.textDim, fontSize: 12, marginBottom: 14 }}>
+                      {socialLinks[socialActionMenuPlatform] || ''}
+                    </Text>
+
+                    {/* Edit Option */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 12,
+                        paddingVertical: 12,
+                        paddingHorizontal: 8,
+                        borderBottomWidth: 1,
+                        borderBottomColor: colors.divider,
+                      }}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        const platform = socialActionMenuPlatform;
+                        setSocialActionMenuPlatform(null);
+                        if (platform) {
+                          handleStartEditLink(platform, socialLinks[platform] || '');
+                        }
+                      }}
+                    >
+                      <EditIcon size={18} color={colors.accent} />
+                      <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                        {t('editLink', 'Edit Link')}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Delete Option */}
+                    <TouchableOpacity
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 12,
+                        paddingVertical: 12,
+                        paddingHorizontal: 8,
+                      }}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        const platform = socialActionMenuPlatform;
+                        setSocialActionMenuPlatform(null);
+                        if (platform) {
+                          handleDeleteSingleLink(platform);
+                        }
+                      }}
+                    >
+                      <TrashIcon size={18} color="#EF4444" />
+                      <Text style={{ color: '#EF4444', fontSize: 15, fontWeight: '600' }}>
+                        {t('deleteLink', 'Delete Link')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+
+      {/* ---------------------------------------------------- */}
       {/* 6. PERMANENT DELETE MODAL                            */}
       {/* ---------------------------------------------------- */}
       <Modal visible={showDeleteModal} animationType="slide" transparent>
@@ -813,8 +1462,13 @@ export const AccountsScreen = ({
               }}
             />
             <ScrollView
-              contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+              contentContainerStyle={{
+                flexGrow: 1,
+                justifyContent: 'center',
+                paddingBottom: Math.max(20, keyboardHeight + 20),
+              }}
               keyboardShouldPersistTaps="handled"
+              automaticallyAdjustKeyboardInsets={true}
             >
               <View style={[styles.modalCard, { backgroundColor: colors.surface, borderColor: colors.error, maxHeight: '90%' }]}>
                 <View style={styles.modalHeader}>
@@ -916,6 +1570,18 @@ export const AccountsScreen = ({
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      <ChangePhoneModal
+        visible={showChangePhoneModal}
+        currentPhone={activeUserPhone}
+        shopId={shopId}
+        userId={userId}
+        onClose={() => setShowChangePhoneModal(false)}
+        onSuccess={(newPhone) => {
+          setActiveUserPhone(newPhone);
+          onPhoneUpdated?.(newPhone);
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -1084,35 +1750,74 @@ const styles = StyleSheet.create({
   toolsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    justifyContent: 'space-between',
+    rowGap: 9,
+    width: '100%',
   },
   toolCard: {
     width: '48.5%',
-    borderWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
     borderRadius: radii.md,
-    padding: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    minHeight: 52,
   },
-  toolIconRow: {
+  toolBadgeFloat: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  toolBadgeFloatText: { color: '#161826', fontSize: 9.5, fontWeight: '800' },
+  toolTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  toolContentCol: {
+    flex: 1,
+    paddingRight: 8,
+    justifyContent: 'center',
+  },
+  toolTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 3,
   },
   toolBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 8,
   },
   toolBadgeText: {
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 9.5,
+    fontWeight: '700',
   },
   toolTitle: {
-    fontSize: 13.5,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
   toolSub: {
     fontSize: 11,
-    marginTop: 2,
+    lineHeight: 14,
+  },
+  toolIconContainer: {
+    width: 30,
+    height: 30,
+    borderRadius: radii.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
   },
   settingsBox: {
     borderWidth: 1,
@@ -1134,6 +1839,26 @@ const styles = StyleSheet.create({
   settingsRowSub: {
     fontSize: 11.5,
     marginTop: 2,
+  },
+  nestedAccountBox: {
+    borderTopWidth: 1,
+    paddingLeft: 12,
+  },
+  nestedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+  },
+  nestedRowTitle: {
+    fontSize: 13.5,
+    fontWeight: '500',
+  },
+  nestedRowSub: {
+    fontSize: 11,
+    marginTop: 1,
   },
   supportBadge: {
     paddingHorizontal: 10,
@@ -1211,5 +1936,11 @@ const styles = StyleSheet.create({
     color: '#000',
     fontWeight: '700',
     fontSize: 14,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: 10,
+    fontSize: 13,
   },
 });

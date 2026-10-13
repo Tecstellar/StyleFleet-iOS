@@ -54,6 +54,10 @@ export interface Database {
           accent_color: string;
           invoice_prefix: string;
           gst_rate: number;
+          invoice_numbering_mode?: string | null;
+          social_links?: Record<string, string> | null;
+          upi_id?: string | null;
+          free_sales_limit?: number | null;
           created_at: string;
           updated_at: string;
         };
@@ -70,6 +74,10 @@ export interface Database {
           accent_color?: string;
           invoice_prefix?: string;
           gst_rate?: number;
+          invoice_numbering_mode?: string | null;
+          social_links?: Record<string, string> | null;
+          upi_id?: string | null;
+          free_sales_limit?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -86,6 +94,10 @@ export interface Database {
           accent_color?: string;
           invoice_prefix?: string;
           gst_rate?: number;
+          invoice_numbering_mode?: string | null;
+          social_links?: Record<string, string> | null;
+          upi_id?: string | null;
+          free_sales_limit?: number | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -125,6 +137,7 @@ export interface Database {
           role: string;
           phone: string | null;
           is_active: boolean;
+          rating?: string | null;
           target_amount_minor: number | null;
           created_at: string;
           updated_at: string;
@@ -137,6 +150,7 @@ export interface Database {
           role?: string;
           phone?: string | null;
           is_active?: boolean;
+          rating?: string | null;
           target_amount_minor?: number | null;
           created_at?: string;
           updated_at?: string;
@@ -149,6 +163,7 @@ export interface Database {
           role?: string;
           phone?: string | null;
           is_active?: boolean;
+          rating?: string | null;
           target_amount_minor?: number | null;
           created_at?: string;
           updated_at?: string;
@@ -163,6 +178,7 @@ export interface Database {
           notes: string | null;
           preferred_staff_id: string | null;
           is_starred: boolean;
+          is_active?: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -174,6 +190,7 @@ export interface Database {
           notes?: string | null;
           preferred_staff_id?: string | null;
           is_starred?: boolean;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -185,6 +202,7 @@ export interface Database {
           notes?: string | null;
           preferred_staff_id?: string | null;
           is_starred?: boolean;
+          is_active?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -349,10 +367,14 @@ export interface Database {
           subtotal_minor: number;
           discount_minor: number;
           tax_minor: number;
+          tip_minor?: number;
           total_minor: number;
           notes: string | null;
+          reminder_status?: string | null;
+          confirmation_status?: string | null;
           issued_at: string;
           created_by: string | null;
+          pdf_url?: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -366,10 +388,14 @@ export interface Database {
           subtotal_minor?: number;
           discount_minor?: number;
           tax_minor?: number;
+          tip_minor?: number;
           total_minor?: number;
           notes?: string | null;
+          reminder_status?: string | null;
+          confirmation_status?: string | null;
           issued_at?: string;
           created_by?: string | null;
+          pdf_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -383,10 +409,14 @@ export interface Database {
           subtotal_minor?: number;
           discount_minor?: number;
           tax_minor?: number;
+          tip_minor?: number;
           total_minor?: number;
           notes?: string | null;
+          reminder_status?: string | null;
+          confirmation_status?: string | null;
           issued_at?: string;
           created_by?: string | null;
+          pdf_url?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -852,6 +882,38 @@ export interface Database {
           device_info?: Json;
           context?: Json;
           created_at?: string;
+        };
+      };
+      app_version_config: {
+        Row: {
+          id: string;
+          min_required_version: string;
+          latest_version: string;
+          is_mandatory: boolean;
+          release_notes: string | null;
+          play_store_url: string;
+          app_store_url: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          min_required_version?: string;
+          latest_version?: string;
+          is_mandatory?: boolean;
+          release_notes?: string | null;
+          play_store_url?: string;
+          app_store_url?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          min_required_version?: string;
+          latest_version?: string;
+          is_mandatory?: boolean;
+          release_notes?: string | null;
+          play_store_url?: string;
+          app_store_url?: string;
+          updated_at?: string;
         };
       };
     };

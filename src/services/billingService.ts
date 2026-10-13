@@ -6,6 +6,7 @@ export interface CartCalculation {
   discountMinor: number;
   taxableMinor: number;
   taxMinor: number;
+  tipMinor: number;
   totalMinor: number;
   colourSubtotalMinor: number;
   hasOffer: boolean;
@@ -16,7 +17,8 @@ export class BillingService {
   calculateCart(
     items: { priceMinor: number; isColour?: boolean; name: string }[],
     discountOrOfferActive: boolean | number = 0,
-    includeGst = typeof discountOrOfferActive === 'boolean' ? discountOrOfferActive : false
+    includeGst = typeof discountOrOfferActive === 'boolean' ? discountOrOfferActive : false,
+    tipMinor = 0
   ): CartCalculation {
     const subtotalMinor = items.reduce((sum, item) => sum + item.priceMinor, 0);
     const colourSubtotalMinor = items
@@ -30,9 +32,10 @@ export class BillingService {
       discountMinor = Math.round(colourSubtotalMinor * 0.2);
     }
 
+    const safeTipMinor = Math.max(0, tipMinor || 0);
     const taxableMinor = subtotalMinor - discountMinor;
     const taxMinor = includeGst ? Math.round(taxableMinor * 0.18) : 0;
-    const totalMinor = taxableMinor + taxMinor;
+    const totalMinor = taxableMinor + taxMinor + safeTipMinor;
 
     const hasOffer = discountMinor > 0;
     const offerNote = hasOffer
@@ -44,6 +47,7 @@ export class BillingService {
       discountMinor,
       taxableMinor,
       taxMinor,
+      tipMinor: safeTipMinor,
       totalMinor,
       colourSubtotalMinor,
       hasOffer,
@@ -60,6 +64,9 @@ export class BillingService {
     items: { name: string; priceMinor: number; isColour?: boolean }[];
     paymentMethod: string;
     customDiscountMinor?: number;
+    customTipMinor?: number;
+    paidAmountMinor?: number;
+    dueAmountMinor?: number;
   }): Promise<Bill> {
     if (params.items.length === 0) {
       throw new Error('Please select at least one service');
@@ -73,7 +80,10 @@ export class BillingService {
       params.staffId,
       params.items,
       params.paymentMethod,
-      params.customDiscountMinor ?? 0
+      params.customDiscountMinor ?? 0,
+      params.paidAmountMinor,
+      params.dueAmountMinor,
+      params.customTipMinor ?? 0
     );
   }
 
@@ -82,5 +92,21 @@ export class BillingService {
     return Promise.resolve();
   }
 }
+
+export const isOpeningDueBill = (b: { invoice_number?: string; notes?: string | null } | null | undefined): boolean => {
+  if (!b) return false;
+  if (b.invoice_number?.startsWith('DUE-')) return true;
+  const n = (b.notes || '').toLowerCase();
+  if (
+    n.includes('opening balance') ||
+    n.includes('adjusted customer due') ||
+    n.includes('opening due balance') ||
+    n.includes('customer opening due balance') ||
+    n.includes('initial opening')
+  ) {
+    return true;
+  }
+  return false;
+};
 
 export const billingService = new BillingService();

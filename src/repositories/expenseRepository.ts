@@ -1,6 +1,9 @@
 import { supabase } from '../lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Expense, Period } from '../types/domain';
+import { countsInProfit, splitExpenseTotals } from '../utils/expenseProfit';
+import { DbErrorLike, assertSaved, friendlyDbMessage, isRemoteShop } from '../utils/persist';
+import { isValidUuid } from '../utils/uuid';
 
 const STORAGE_KEY_EXPENSES = '@salon_os_expenses_cache';
 
@@ -15,13 +18,32 @@ export const EXPENSE_CATEGORIES = [
 
 export interface PnLMetrics {
   income_minor: number;
+  /** Expenses that count against profit. Net is income minus this. */
   expense_minor: number;
+  /** Expenses the owner chose not to count in profit */
+  excluded_minor: number;
   net_minor: number;
   margin_pct: number;
   dues_minor: number;
   groups: { label: string; income_h: number; expense_h: number }[];
   categories: { label: string; amt_minor: number; pct: number }[];
 }
+
+/** Friendly text when the database has not been updated with the include_in_profit column yet. */
+const profitColumnMessage = (message?: string): string | null => {
+  if (!message) return null;
+  if (message.includes('include_in_profit')) {
+    return 'Choosing whether an expense counts in profit needs a database update. Please contact support.';
+  }
+  if (message.includes('staff_id')) {
+    return 'Linking an expense to a stylist needs a database update. Please contact support.';
+  }
+  return null;
+};
+
+/** The friendly "needs a database update" text when it applies, otherwise the usual save message. */
+const expenseSaveError = (error: DbErrorLike, what: string): Error =>
+  new Error(profitColumnMessage(error.message) || friendlyDbMessage(error, what));
 
 export class ExpenseRepository {
   /**
@@ -49,6 +71,8 @@ export class ExpenseRepository {
             month: 'short',
           }),
           created_at: e.created_at,
+          include_in_profit: (e as { include_in_profit?: boolean | null }).include_in_profit !== false,
+          staff_id: (e as { staff_id?: string | null }).staff_id ?? null,
         }));
         await this.cacheExpenses(shopId, mapped);
         return mapped;
@@ -69,7 +93,9 @@ export class ExpenseRepository {
     categoryName: string,
     amountRupees: number,
     note: string,
-    paymentMethod = 'UPI'
+    paymentMethod = 'UPI',
+    includeInProfit = true,
+    staffId: string | null = null
   ): Promise<Expense> {
     const today = new Date();
     const newExp: Expense = {
@@ -82,10 +108,12 @@ export class ExpenseRepository {
       payment_method: paymentMethod,
       expense_date: 'Today',
       created_at: today.toISOString(),
+      include_in_profit: includeInProfit,
+      staff_id: staffId,
     };
 
-    try {
-      const { data, error } = await supabase
+    if (isRemoteShop(shopId)) {
+      const saved = await supabase
         .from('expenses')
         .insert({
           shop_id: shopId,
@@ -93,21 +121,104 @@ export class ExpenseRepository {
           amount_minor: Math.round(amountRupees * 100),
           payment_method: paymentMethod,
           expense_date: today.toISOString().split('T')[0],
+          // only sent when turned off, so adding expenses keeps working before the database update
+          ...(includeInProfit ? {} : { include_in_profit: false }),
+          // same for the team member link: only sent when one is chosen
+          ...(staffId ? { staff_id: staffId } : {}),
         } as any)
         .select()
         .single();
 
-      if (!error && data) {
-        newExp.id = data.id;
-      }
-    } catch (e) {
-      console.warn('Supabase expense save offline:', e);
+      if (saved.error) throw expenseSaveError(saved.error, 'the expense');
+      if (!saved.data) throw new Error('The expense could not be saved. Please try again.');
+      newExp.id = saved.data.id;
     }
 
     const current = (await this.getCachedExpenses(shopId)) || [];
     const updated = [newExp, ...current];
     await this.cacheExpenses(shopId, updated);
     return newExp;
+  }
+
+  /**
+   * Update an existing expense
+   */
+  async updateExpense(
+    shopId: string,
+    expenseId: string,
+    updates: {
+      categoryName?: string;
+      amountRupees?: number;
+      note?: string;
+      paymentMethod?: string;
+      includeInProfit?: boolean;
+      /** a team member id to link, null to clear the link, undefined to leave it as it is */
+      staffId?: string | null;
+    }
+  ): Promise<Expense | null> {
+    const cached = (await this.getCachedExpenses(shopId)) || [];
+    const current = cached.find((e) => e.id === expenseId);
+    if (!current) return null;
+
+    const amountMinor = updates.amountRupees !== undefined ? Math.round(updates.amountRupees * 100) : current.amount_minor;
+    const categoryName = updates.categoryName || current.category_name;
+    const note = updates.note !== undefined ? updates.note : current.note;
+    const paymentMethod = updates.paymentMethod || current.payment_method;
+    const includeInProfit =
+      updates.includeInProfit !== undefined ? updates.includeInProfit : countsInProfit(current);
+    const profitChanged = includeInProfit !== countsInProfit(current);
+    const staffId = updates.staffId !== undefined ? updates.staffId : current.staff_id ?? null;
+    const staffChanged = staffId !== (current.staff_id ?? null);
+
+    const updatedExp: Expense = {
+      ...current,
+      category_name: categoryName,
+      amount_minor: amountMinor,
+      note,
+      payment_method: paymentMethod,
+      include_in_profit: includeInProfit,
+      staff_id: staffId,
+    };
+
+    if (isRemoteShop(shopId) && isValidUuid(expenseId)) {
+      const result = await supabase
+        .from('expenses')
+        .update({
+          note,
+          amount_minor: amountMinor,
+          payment_method: paymentMethod,
+          updated_at: new Date().toISOString(),
+          ...(profitChanged ? { include_in_profit: includeInProfit } : {}),
+          ...(staffChanged ? { staff_id: staffId } : {}),
+        })
+        .eq('id', expenseId)
+        .eq('shop_id', shopId)
+        .select('id');
+
+      if (result.error) throw expenseSaveError(result.error, 'the expense');
+      if (!result.data || result.data.length === 0) {
+        throw new Error('This expense was not found on the server, so the changes were not saved.');
+      }
+    }
+
+    const updatedList = cached.map((e) => (e.id === expenseId ? updatedExp : e));
+    await this.cacheExpenses(shopId, updatedList);
+    return updatedExp;
+  }
+
+  /**
+   * Delete an expense
+   */
+  async deleteExpense(shopId: string, expenseId: string): Promise<boolean> {
+    if (isRemoteShop(shopId) && isValidUuid(expenseId)) {
+      const result = await supabase.from('expenses').delete().eq('id', expenseId).eq('shop_id', shopId);
+      assertSaved(result, 'the deletion');
+    }
+
+    const cached = (await this.getCachedExpenses(shopId)) || [];
+    const updatedList = cached.filter((e) => e.id !== expenseId);
+    await this.cacheExpenses(shopId, updatedList);
+    return true;
   }
 
   /**
@@ -141,6 +252,7 @@ export class ExpenseRepository {
     }
 
     const filteredBills = billsList.filter((b) => {
+      if (b.status === 'deleted') return false;
       const t = getTime(b.created_at);
       return t >= startLimit && t <= todayEnd;
     });
@@ -170,7 +282,13 @@ export class ExpenseRepository {
 
     let income = 0;
     for (const b of billsList as any[]) {
-      if (b.payments && b.payments.length > 0) {
+      if (!b || b.status === 'deleted') continue;
+      if (typeof b.paid_amount_minor === 'number') {
+        const t = getTime(b.created_at);
+        if (t >= startLimit && t <= todayEnd) {
+          income += b.paid_amount_minor;
+        }
+      } else if (b.payments && b.payments.length > 0) {
         for (const p of b.payments) {
           const pt = p.paid_at ? new Date(p.paid_at).getTime() : getTime(b.created_at);
           if (pt >= startLimit && pt <= todayEnd) {
@@ -184,7 +302,9 @@ export class ExpenseRepository {
         }
       }
     }
-    const expense = filteredExpenses.reduce((acc, e) => acc + (e.amount_minor || 0), 0);
+    // Profit only subtracts expenses the owner chose to count; the rest are reported separately.
+    const split = splitExpenseTotals(filteredExpenses);
+    const expense = split.countedMinor;
     const net = income - expense;
     const margin = income > 0 ? Math.round((net / income) * 100) : 0;
 
@@ -197,10 +317,12 @@ export class ExpenseRepository {
       catMap[cat] = (catMap[cat] || 0) + (e.amount_minor || 0);
     }
 
+    // "Where the money went" lists everything spent, counted or not, so shares are of the total spent
+    const totalSpent = split.countedMinor + split.excludedMinor;
     const categories = Object.entries(catMap).map(([label, amt]) => ({
       label,
       amt_minor: amt,
-      pct: expense > 0 ? Math.round((amt / expense) * 100) : 0,
+      pct: totalSpent > 0 ? Math.round((amt / totalSpent) * 100) : 0,
     }));
 
     // Groups for timeline visualization
@@ -222,6 +344,7 @@ export class ExpenseRepository {
     return {
       income_minor: income,
       expense_minor: expense,
+      excluded_minor: split.excludedMinor,
       net_minor: net,
       margin_pct: margin,
       dues_minor: dues,
@@ -234,7 +357,7 @@ export class ExpenseRepository {
     await AsyncStorage.setItem(`${STORAGE_KEY_EXPENSES}_${shopId}`, JSON.stringify(expenses));
   }
 
-  private async getCachedExpenses(shopId: string): Promise<Expense[] | null> {
+  async getCachedExpenses(shopId: string): Promise<Expense[] | null> {
     try {
       const data = await AsyncStorage.getItem(`${STORAGE_KEY_EXPENSES}_${shopId}`);
       if (data) return JSON.parse(data);

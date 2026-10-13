@@ -7,11 +7,16 @@ const STORAGE_KEY_CURRENT_SHOP = '@salon_os_current_shop_id';
 const TWO_FACTOR_KEY = 'e11be203-4f77-11f1-9800-0200cd936042';
 const TWO_FACTOR_TEMPLATE = 'Login_Verification_OTP';
 
+import { StylistPermissions } from '../types/domain';
+
 export interface AuthUser {
   id: string;
   phone: string;
   fullName?: string;
   shopId?: string;
+  role?: 'owner' | 'stylist';
+  stylistId?: string;
+  permissions?: StylistPermissions;
 }
 
 const DEMO_OTP_MODE = process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
@@ -31,6 +36,15 @@ export class AuthRepository {
     const clean = phone.replace(/\D/g, '').slice(-10);
     if (clean.length !== 10) {
       return { success: false, error: 'Please enter a valid 10-digit mobile number' };
+    }
+
+
+
+    if (process.env.NODE_ENV !== 'test' && (clean === '9876543210' || clean === '9800000000' || DEMO_OTP_MODE)) {
+      lastOtpSentPhone = clean;
+      lastOtpSentTime = Date.now();
+      lastSessionId = `demo_session_${clean}`;
+      return { success: true, sessionId: lastSessionId };
     }
 
     const existingDispatch = inFlightOtpDispatches.get(clean);
@@ -72,7 +86,7 @@ export class AuthRepository {
 
     try {
       const result = await dispatchPromise;
-      if (!result.success && DEMO_OTP_MODE) {
+      if (!result.success && (DEMO_OTP_MODE || clean === '9876543210' || clean === '9888800001' || clean === '9888800002')) {
         const mockSess = `mock_sess_${Date.now()}`;
         lastOtpSentPhone = clean;
         lastOtpSentTime = Date.now();
@@ -101,8 +115,15 @@ export class AuthRepository {
     }
 
     try {
-      // 1. Try Supabase Edge Function verification
-      if (sessionId && !sessionId.startsWith('mock_')) {
+      // 1. Reviewer & Demo OTP bypass (Cashfree, Play Store, Apple App Review)
+      // Must be evaluated BEFORE remote SMS verify to ensure reviewers with fixed OTP 123456 are never rejected.
+      if (otp === '123456' || (sessionId && sessionId.startsWith('mock_')) || (sessionId && sessionId.startsWith('demo_'))) {
+        const authUser = await this.establishSupabaseSession(clean);
+        return { success: true, user: authUser };
+      }
+
+      // 2. Try Supabase Edge Function verification
+      if (sessionId && !sessionId.startsWith('mock_') && !sessionId.startsWith('demo_')) {
         try {
           const { data, error } = await supabase.functions.invoke('otp-service', {
             body: { action: 'verify', phone: clean, otp, sessionId },
@@ -120,7 +141,7 @@ export class AuthRepository {
           // Fall through to direct verification
         }
 
-        // 2. Direct 2Factor SMS verify endpoint
+        // 3. Direct 2Factor SMS verify endpoint
         try {
           const verifyUrl = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/VERIFY/${sessionId}/${otp}`;
           const res = await fetch(verifyUrl);
@@ -137,10 +158,66 @@ export class AuthRepository {
         }
       }
 
-      // 3. Development / Demo OTP bypass (123456 or mock session)
-      if (otp === '123456' || (sessionId?.startsWith('mock_') && DEMO_OTP_MODE)) {
-        const authUser = await this.establishSupabaseSession(clean);
-        return { success: true, user: authUser };
+      return { success: false, error: 'Invalid verification code' };
+    } catch (e: any) {
+      return { success: false, error: e.message || 'Verification failed' };
+    }
+  }
+
+  /**
+   * Verify OTP code without establishing or overriding the active Supabase Auth user session.
+   * Used for sensitive multi-factor verification flows such as Changing Phone Number.
+   */
+  async verifyOtpCodeOnly(
+    phone: string,
+    otp: string,
+    sessionId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const clean = phone.replace(/\D/g, '').slice(-10);
+    if (otp.length !== 6) {
+      return { success: false, error: 'OTP must be 6 digits' };
+    }
+
+    try {
+      // 1. Reviewer & Demo OTP bypass
+      if (
+        otp === '123456' ||
+        (sessionId && (sessionId.startsWith('mock_') || sessionId.startsWith('demo_'))) ||
+        DEMO_OTP_MODE ||
+        clean === '9876543210' ||
+        clean === '9800000000'
+      ) {
+        return { success: true };
+      }
+
+      // 2. Try Supabase Edge Function verification
+      if (sessionId && !sessionId.startsWith('mock_') && !sessionId.startsWith('demo_')) {
+        try {
+          const { data, error } = await supabase.functions.invoke('otp-service', {
+            body: { action: 'verify', phone: clean, otp, sessionId },
+          });
+
+          if (!error && data && data.success) {
+            return { success: true };
+          }
+        } catch {
+          // Fall through to direct verification
+        }
+
+        // 3. Direct 2Factor SMS verify endpoint
+        try {
+          const verifyUrl = `https://2factor.in/API/V1/${TWO_FACTOR_KEY}/SMS/VERIFY/${sessionId}/${otp}`;
+          const res = await fetch(verifyUrl);
+          const json = await res.json();
+
+          if (json && json.Status === 'Success' && json.Details === 'OTP Matched') {
+            return { success: true };
+          } else if (json && json.Details) {
+            return { success: false, error: json.Details };
+          }
+        } catch (e: any) {
+          console.warn('2Factor verification direct error:', e.message);
+        }
       }
 
       return { success: false, error: 'Invalid verification code' };
@@ -208,6 +285,33 @@ export class AuthRepository {
     };
     await this.saveSession(fallbackUser);
     return fallbackUser;
+  }
+
+  /**
+   * Makes sure the database knows who is signed in. The phone can remember a user without a live
+   * database session (restored from storage, or the OTP check done by the server). Owner-only
+   * writes such as adding a stylist are refused without one. This signs in quietly, never
+   * creates an account, and leaves the remembered user untouched.
+   * Returns true when a real session exists.
+   */
+  async ensureSupabaseSession(): Promise<boolean> {
+    try {
+      if (!supabase.auth) return true;
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) return true;
+
+      const cached = await AsyncStorage.getItem(STORAGE_KEY_AUTH_USER);
+      const phone = cached ? String(JSON.parse(cached)?.phone || '').replace(/\D/g, '').slice(-10) : '';
+      if (phone.length !== 10) return false;
+
+      const { data: signIn, error } = await supabase.auth.signInWithPassword({
+        email: `user_${phone}@stylefleet.salon`,
+        password: `StyleFleet_${phone}_SecureAuth!`,
+      });
+      return !error && !!signIn?.user;
+    } catch {
+      return false;
+    }
   }
 
   async saveSession(user: AuthUser): Promise<void> {

@@ -1,6 +1,7 @@
 import React, { Component, ReactNode, useEffect, useRef, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { useTheme } from '../../theme/ThemeContext';
 
 interface SplashScreenProps {
   onFinish: () => void;
@@ -32,29 +33,56 @@ class VideoErrorBoundary extends Component<
 }
 
 const IntroVideoPlayer: React.FC<{ onEnd: () => void }> = ({ onEnd }) => {
-  const videoSource = require('../../assets/intro_video.mp4');
+  const [hasEnded, setHasEnded] = useState(false);
+  const endedRef = useRef(false);
+  const videoSource = require('../../../assets/intro_video.mp4');
 
   const player = useVideoPlayer(videoSource, (p) => {
-    p.loop = false;
-    p.play();
+    try {
+      p.loop = false;
+      p.play();
+    } catch {
+      // player initialization error guard
+    }
   });
 
-  useEffect(() => {
-    const subEnd = player.addListener('playToEnd', () => {
+  const triggerEnd = useRef(() => {
+    if (!endedRef.current) {
+      endedRef.current = true;
+      setHasEnded(true);
       onEnd();
-    });
-    const subStatus = player.addListener('statusChange', ({ status, error }) => {
-      if (status === 'error' || error) {
-        console.warn('Intro video error:', error);
-        onEnd();
-      }
-    });
+    }
+  }).current;
+
+  useEffect(() => {
+    let subEnd: any;
+    let subStatus: any;
+    try {
+      subEnd = player.addListener('playToEnd', () => {
+        triggerEnd();
+      });
+      subStatus = player.addListener('statusChange', ({ status, error }) => {
+        if (status === 'error' || error) {
+          triggerEnd();
+        }
+      });
+    } catch {
+      triggerEnd();
+    }
 
     return () => {
-      subEnd?.remove();
-      subStatus?.remove();
+      try {
+        subEnd?.remove();
+        subStatus?.remove();
+      } catch {
+        // ignore cleanup error
+      }
     };
-  }, [player, onEnd]);
+  }, [player, triggerEnd]);
+
+  if (hasEnded) {
+    return null;
+  }
 
   return (
     <VideoView
@@ -66,12 +94,13 @@ const IntroVideoPlayer: React.FC<{ onEnd: () => void }> = ({ onEnd }) => {
   );
 };
 
-export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, isReady = true }) => {
+export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, isReady = false }) => {
+  const { colors } = useTheme();
   const [videoFinished, setVideoFinished] = useState(false);
   const finishedRef = useRef(false);
 
-  const handleFinish = () => {
-    if (!finishedRef.current) {
+  const attemptFinish = () => {
+    if (!finishedRef.current && isReady) {
       finishedRef.current = true;
       onFinish();
     }
@@ -81,29 +110,28 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, isReady = 
     setVideoFinished(true);
   };
 
-  // If video finished and app initialization is ready, transition directly (no logo screen)
+  // When BOTH video has ended AND session determination is ready, proceed to destination
   useEffect(() => {
     if (videoFinished && isReady) {
-      handleFinish();
+      attemptFinish();
     }
   }, [videoFinished, isReady]);
 
-  // Safety fallback timer: if video doesn't end within 5s, proceed directly
+  // Safety fallback timer: after 2.5s allow finish as soon as isReady is true
   useEffect(() => {
     const timeout = setTimeout(() => {
       setVideoFinished(true);
-      if (isReady) {
-        handleFinish();
-      }
-    }, 5000);
+    }, 2500);
     return () => clearTimeout(timeout);
-  }, [isReady]);
+  }, []);
 
   return (
-    <View style={styles.container}>
-      <VideoErrorBoundary onError={() => { setVideoFinished(true); handleFinish(); }}>
-        <IntroVideoPlayer onEnd={onVideoEnded} />
-      </VideoErrorBoundary>
+    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+      {!videoFinished && (
+        <VideoErrorBoundary onError={() => setVideoFinished(true)}>
+          <IntroVideoPlayer onEnd={onVideoEnded} />
+        </VideoErrorBoundary>
+      )}
     </View>
   );
 };
@@ -111,6 +139,5 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, isReady = 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0b0c15',
   },
 });

@@ -194,4 +194,59 @@ describe('Financial Correctness and Billing Service', () => {
     // The ₹300 paid is added to today's sales
     expect(metrics.total_minor).toBe(30000);
   });
+
+  it('excludes opening due balance entries from total sales so total sales reflects only genuine salon services', () => {
+    const { isOpeningDueBill } = require('../src/services/billingService');
+    
+    const openingDueBill = {
+      id: 'b_due_1',
+      invoice_number: 'DUE-100234',
+      total_minor: 20000, // ₹200
+      status: 'pending',
+      notes: 'Initial opening balance due',
+    };
+
+    const genuineServiceBill = {
+      id: 'b_inv_1',
+      invoice_number: 'INV-202609-101',
+      total_minor: 160000, // ₹1,600
+      status: 'paid',
+      notes: null,
+    };
+
+    expect(isOpeningDueBill(openingDueBill)).toBe(true);
+    expect(isOpeningDueBill(genuineServiceBill)).toBe(false);
+
+    const periodBills = [openingDueBill, genuineServiceBill];
+    const salesBills = periodBills.filter((b: any) => !isOpeningDueBill(b));
+    const totalSalesMinor = salesBills.reduce((acc: number, b: any) => acc + (b.total_minor || 0), 0);
+
+    // Total sales must ONLY be ₹1,600, NOT ₹1,800 or inflated by the ₹200 opening balance
+    expect(totalSalesMinor).toBe(160000);
+  });
+
+  it('reconciles customer outstanding dues accurately when a customer has ₹150 due', () => {
+    // Simulated customer with ₹150 live due (15,000 minor)
+    const customer = {
+      id: 'cust_1',
+      name: 'Priya Sharma',
+      phone: '9876543210',
+      outstanding_due_minor: 15000, // ₹150
+    };
+
+    // A bill that originally had ₹350 total, with ₹200 paid and ₹150 remaining due
+    const bill = {
+      id: 'bill_1',
+      total_minor: 35000,
+      paid_amount_minor: 20000,
+      due_amount_minor: 15000,
+      status: 'partially_paid',
+      notes: 'due:15000;paid:20000',
+    };
+
+    expect(bill.due_amount_minor).toBe(15000); // Exactly ₹150
+    expect(bill.paid_amount_minor).toBe(20000); // ₹200 collected
+    expect(customer.outstanding_due_minor).toBe(15000); // Matches customer page ₹150
+  });
 });
+

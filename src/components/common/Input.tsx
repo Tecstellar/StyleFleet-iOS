@@ -41,7 +41,7 @@ export const Input = ({
           <Text style={[styles.label, { color: colors.textMuted }]}>
             {label}
             {optional && (
-              <Text style={{ color: colors.textSubtle, opacity: 0.6 }}> · optional</Text>
+              <Text style={{ color: colors.textDim }}> · optional</Text>
             )}
           </Text>
         </View>
@@ -50,7 +50,7 @@ export const Input = ({
         style={[
           styles.inputContainer,
           {
-            backgroundColor: colors.surface,
+            backgroundColor: colors.card,
             borderColor: isFocused ? colors.accent : colors.divider,
             minHeight: multiline ? 68 : 42,
             alignItems: multiline ? 'flex-start' : 'center',
@@ -62,7 +62,7 @@ export const Input = ({
             style={[
               styles.prefixContainer,
               {
-                backgroundColor: colors.surface,
+                backgroundColor: colors.card,
                 borderColor: colors.divider,
               },
             ]}
@@ -71,7 +71,7 @@ export const Input = ({
           </View>
         )}
         <TextInput
-          placeholderTextColor="rgba(255, 255, 255, 0.3)"
+          placeholderTextColor={colors.placeholder || colors.textDim}
           style={[
             styles.textInput,
             {
