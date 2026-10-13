@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Modal,
   View,
@@ -9,8 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
-  AppState,
-  AppStateStatus,
+  TextInput,
 } from 'react-native';
 import { useTheme } from '../../theme/ThemeContext';
 import { spacing, radii } from '../../theme/spacing';
@@ -30,9 +29,8 @@ import {
   getLaunchOfferEndDate,
 } from '../../utils/subscriptionUtils';
 import { shopRepository } from '../../repositories/shopRepository';
-import { subscriptionRepository } from '../../repositories/subscriptionRepository';
-import { CashfreeCheckoutModal } from './CashfreeCheckoutModal';
-import { SparklesIcon } from '../common/SvgIcons';
+import { supportRepository } from '../../repositories/supportRepository';
+import { SparklesIcon, WhatsAppIcon, PhoneCallIcon } from '../common/SvgIcons';
 
 interface PlanSelectionModalProps {
   visible: boolean;
@@ -93,140 +91,73 @@ export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({
     }
   }, [initialPlanId, visible]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isVerifying, setIsVerifying] = useState(false);
-  const [pendingOrderId, setPendingOrderId] = useState<string | null>(null);
-
-  // Cashfree in-app checkout modal state
-  const [checkoutSessionId, setCheckoutSessionId] = useState<string | null>(null);
-  const [checkoutOrderId, setCheckoutOrderId] = useState<string | null>(null);
-  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
-
-  const pendingOrderIdRef = useRef<string | null>(null);
-  pendingOrderIdRef.current = pendingOrderId;
-  const visibleRef = useRef<boolean>(visible);
-  visibleRef.current = visible;
+  const [userNote, setUserNote] = useState('');
 
   const selectedPlan =
     activePlans.find((p) => p.id === selectedPlanId) || activePlans[0];
 
-  const verifyAndActivate = useCallback(
-    async (orderIdToVerify: string) => {
-      if (isVerifying) return;
-      setIsVerifying(true);
-      try {
-        const verifyRes = await subscriptionRepository.verifyPaymentOrder({
-          orderId: orderIdToVerify,
-          shopId,
-          planId: selectedPlanId,
-          isLaunchOffer: isLaunchOfferActive,
-        });
+  const handleOpenWhatsAppSupport = () => {
+    const supportPhone = '918903368006';
+    const formattedPrice = formatPriceInRupees(selectedPlan.priceInRupees);
+    const msg = `Hi StyleFleet Team, I would like to upgrade my salon to the ${selectedPlan.name} (${formattedPrice}). Shop ID: ${shopId}. Please guide me on activation.`;
+    Linking.openURL(`https://wa.me/${supportPhone}?text=${encodeURIComponent(msg)}`).catch(() => {});
+  };
 
-        if (verifyRes.success) {
-          setPendingOrderId(null);
-          Alert.alert(
-            t('paymentSuccess', 'Payment Successful!'),
-            `${selectedPlan.name} Premium is now active for your salon.`
-          );
-          onPlanActivated(selectedPlanId);
-          onClose();
-        } else {
-          // Strictly do NOT activate plan - inform user payment is pending or incomplete
-          Alert.alert(
-            'Payment Pending or Incomplete',
-            'Your payment was not completed or has not yet been confirmed by the bank. Your Free Trial remains active.'
-          );
-        }
-      } catch (err: any) {
-        Alert.alert('Payment Status', err.message || 'Could not verify payment');
-      } finally {
-        setIsVerifying(false);
-      }
-    },
-    [isVerifying, shopId, selectedPlanId, isLaunchOfferActive, selectedPlan.name, onPlanActivated, onClose, t]
-  );
+  const handleCallSupport = () => {
+    Linking.openURL('tel:8903368006').catch(() => {});
+  };
 
-  // 1. Listen for deep link redirects back to app: stylefleet://payment-callback?order_id=...
-  useEffect(() => {
-    const handleUrl = (event: { url: string }) => {
-      if (event.url && event.url.includes('payment-callback')) {
-        const urlStr = event.url;
-        let linkId = pendingOrderIdRef.current;
-        const match = urlStr.match(/[?&](?:order_id|link_id)=([^&]+)/);
-        if (match && match[1]) {
-          linkId = match[1];
-        }
-        if (linkId) {
-          verifyAndActivate(linkId);
-        }
-      }
-    };
-
-    const sub = Linking.addEventListener('url', handleUrl);
-
-    // Check if app was opened with initial URL
-    Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl && initialUrl.includes('payment-callback')) {
-        handleUrl({ url: initialUrl });
-      }
-    });
-
-    return () => {
-      sub.remove();
-    };
-  }, [verifyAndActivate]);
-
-  // 2. Listen for app returning to foreground (e.g. from UPI apps like PhonePe / GPay)
-  useEffect(() => {
-    const handleAppState = (nextState: AppStateStatus) => {
-      // Only while the plan screen is open: other screens (camera / photo picker) also send the app
-      // to the background and back, and must never trigger a payment check
-      if (nextState === 'active' && pendingOrderIdRef.current && visibleRef.current) {
-        // Automatically verify when returning to the app
-        verifyAndActivate(pendingOrderIdRef.current);
-      }
-    };
-
-    const sub = AppState.addEventListener('change', handleAppState);
-    return () => {
-      sub.remove();
-    };
-  }, [verifyAndActivate]);
-
-  const handleProceedPayment = async () => {
+  const handleProceedUpgrade = async () => {
+    if (isProcessing) return;
     setIsProcessing(true);
     try {
-      // 1. Create order via Cashfree Orders API
-      const order = await subscriptionRepository.createPaymentOrder({
-        shopId,
-        planId: selectedPlanId,
-        customerName: ownerName || 'Salon Owner',
-        customerPhone: phone || '9999999999',
-        isLaunchOffer: isLaunchOfferActive,
-        registrationDateIso: resolvedRegDate || undefined,
+      const formattedPrice = formatPriceInRupees(selectedPlan.priceInRupees);
+      const upgradeMessage = [
+        `Plan Upgrade Request: ${selectedPlan.name} (${formattedPrice} for ${selectedPlan.durationMonths} months).`,
+        `Shop ID: ${shopId}`,
+        `Salon / Owner: ${ownerName || 'Salon Owner'}`,
+        `Contact Phone: ${phone || 'Not provided'}`,
+        userNote.trim() ? `User Note / Request: "${userNote.trim()}"` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      await supportRepository.submitSupportMessage({
+        shop_id: shopId,
+        message: upgradeMessage,
+        contact_info: phone ? `${phone} (${ownerName || 'Owner'})` : ownerName || 'Salon Owner',
+        status: 'open',
       });
 
-      if (!order.paymentSessionId) {
-        throw new Error('Cashfree did not return a payment session. Please try again.');
-      }
+      const cleanPhone = phone || 'your registered phone number';
 
-      setPendingOrderId(order.orderId);
-      setCheckoutSessionId(order.paymentSessionId);
-      setCheckoutOrderId(order.orderId);
-      setShowCheckoutModal(true);
+      Alert.alert(
+        'Upgrade Request Submitted',
+        `Your request for ${selectedPlan.name} (${formattedPrice}) has been sent to StyleFleet Support.\n\nOur team will review your account and contact you at ${cleanPhone} shortly to activate your salon.`,
+        [
+          {
+            text: 'Chat on WhatsApp',
+            onPress: () => {
+              onClose();
+              const supportPhone = '918903368006';
+              const msg = `Hi StyleFleet Team, I requested an upgrade to the ${selectedPlan.name} (${formattedPrice}). Shop ID: ${shopId}. Please assist with activation for my salon.`;
+              Linking.openURL(`https://wa.me/${supportPhone}?text=${encodeURIComponent(msg)}`).catch(() => {});
+            },
+          },
+          {
+            text: 'OK',
+            onPress: onClose,
+            style: 'default',
+          },
+        ]
+      );
     } catch (err: any) {
       Alert.alert(
-        'Payment Gateway Notice',
-        err.message || 'Unable to connect to Cashfree payment gateway. Please check your internet connection and try again.'
+        'Request Notice',
+        err.message || 'Unable to submit upgrade request. Please try again or contact support.'
       );
     } finally {
       setIsProcessing(false);
-    }
-  };
-
-  const handlePaymentFinished = async (orderId: string) => {
-    setShowCheckoutModal(false);
-    if (orderId) {
-      await verifyAndActivate(orderId);
     }
   };
 
@@ -280,46 +211,6 @@ export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({
                 <Text style={{ color: colors.textMuted, fontSize: 16, fontWeight: '700' }}>✕</Text>
               </TouchableOpacity>
             </View>
-
-            {/* Pending Verification Banner (shown when payment was opened in browser) */}
-            {pendingOrderId ? (
-              <View
-                style={[
-                  styles.pendingBanner,
-                  {
-                    backgroundColor: 'rgba(217, 164, 65, 0.12)',
-                    borderColor: colors.accent,
-                  },
-                ]}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-                  {isVerifying ? (
-                    <ActivityIndicator color={colors.accent} size="small" />
-                  ) : (
-                    <Text style={{ fontSize: 18 }}>💳</Text>
-                  )}
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.pendingTitle, { color: colors.text }]}>
-                      Payment initiated in Cashfree
-                    </Text>
-                    <Text style={[styles.pendingSub, { color: colors.textMuted }]}>
-                      Completed your payment in the browser?
-                    </Text>
-                  </View>
-                </View>
-
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  disabled={isVerifying}
-                  onPress={() => verifyAndActivate(pendingOrderId)}
-                  style={[styles.verifyButton, { backgroundColor: colors.accent }]}
-                >
-                  <Text style={styles.verifyButtonText}>
-                    {isVerifying ? 'Checking...' : 'Verify & Activate ✓'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
 
             <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
               {/* Launch offer banner, or the plain "regular price" note once the offer is over */}
@@ -461,6 +352,59 @@ export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({
                   </View>
                 ))}
               </View>
+
+              {/* Message / Note for Support */}
+              <View style={[styles.noteBox, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <Text style={[styles.noteLabel, { color: colors.textMuted }]}>
+                  {t('upgradeNoteLabel', 'Message / Note for Support (Optional)')}
+                </Text>
+                <TextInput
+                  style={[
+                    styles.noteInput,
+                    {
+                      backgroundColor: colors.bg,
+                      borderColor: colors.divider,
+                      color: colors.text,
+                    },
+                  ]}
+                  placeholder={t('upgradeNotePlaceholder', "e.g., 'This was needed', 'Please call after 4 PM'")}
+                  placeholderTextColor={colors.textDim}
+                  value={userNote}
+                  onChangeText={setUserNote}
+                  multiline
+                  numberOfLines={2}
+                />
+              </View>
+
+              {/* StyleFleet Salon Support Desk Direct Contacts */}
+              <View style={[styles.supportContactCard, { backgroundColor: colors.surface, borderColor: colors.divider }]}>
+                <View style={styles.supportContactHeader}>
+                  <Text style={[styles.supportContactTitle, { color: colors.text }]}>
+                    StyleFleet Salon Support Desk
+                  </Text>
+                  <Text style={[styles.supportContactSub, { color: colors.textMuted }]}>
+                    Need assistance or have questions about subscription plans?
+                  </Text>
+                </View>
+                <View style={styles.supportActionsRow}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={handleOpenWhatsAppSupport}
+                    style={[styles.supportActionBtn, { backgroundColor: 'rgba(37, 211, 102, 0.12)', borderColor: '#25D366' }]}
+                  >
+                    <WhatsAppIcon size={16} color="#25D366" />
+                    <Text style={[styles.supportActionBtnText, { color: '#25D366' }]}>WhatsApp</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={handleCallSupport}
+                    style={[styles.supportActionBtn, { backgroundColor: 'rgba(217, 164, 65, 0.12)', borderColor: colors.accent }]}
+                  >
+                    <PhoneCallIcon size={16} color={colors.accent} />
+                    <Text style={[styles.supportActionBtnText, { color: colors.accent }]}>Call Team</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </ScrollView>
 
             {/* Footer: solid, always visible */}
@@ -492,46 +436,34 @@ export const PlanSelectionModal: React.FC<PlanSelectionModalProps> = ({
 
                 <TouchableOpacity
                   activeOpacity={0.85}
-                  disabled={isProcessing || isVerifying}
-                  onPress={handleProceedPayment}
+                  disabled={isProcessing}
+                  onPress={handleProceedUpgrade}
                   style={[
                     styles.payButton,
                     {
                       backgroundColor: colors.accent,
-                      opacity: isProcessing || isVerifying ? 0.7 : 1,
+                      opacity: isProcessing ? 0.7 : 1,
                     },
                   ]}
                 >
                   {isProcessing ? (
                     <ActivityIndicator color="#0D0F14" size="small" />
                   ) : (
-                    <Text style={styles.payButtonText}>{t('proceedToPayment', 'Proceed to Payment')} →</Text>
+                    <Text style={styles.payButtonText}>{t('proceedToUpgrade', 'Proceed to Upgrade')} →</Text>
                   )}
                 </TouchableOpacity>
               </View>
 
-              {/* Cashfree Security Trust Badge */}
+              {/* Concierge Activation Badge */}
               <View style={styles.trustBadgeContainer}>
                 <Text style={[styles.trustBadgeText, { color: colors.textDim }]}>
-                  🔒 {t('securedByCashfree', '100% Secure Checkout powered by Cashfree Payments')}
+                  💬 StyleFleet Salon Concierge Support & Manual Activation
                 </Text>
               </View>
             </View>
           </View>
         </View>
       </Modal>
-
-      {showCheckoutModal && !!checkoutSessionId && !!checkoutOrderId && (
-        <CashfreeCheckoutModal
-          visible={showCheckoutModal}
-          onClose={() => setShowCheckoutModal(false)}
-          paymentSessionId={checkoutSessionId}
-          orderId={checkoutOrderId}
-          planName={selectedPlan.name}
-          amount={selectedPlan.priceInRupees}
-          onPaymentFinished={handlePaymentFinished}
-        />
-      )}
     </>
   );
 };
@@ -817,5 +749,58 @@ const styles = StyleSheet.create({
   trustBadgeText: {
     fontSize: 11,
     fontWeight: '500',
+  },
+  noteBox: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    gap: 6,
+  },
+  noteLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  noteInput: {
+    borderWidth: 1,
+    borderRadius: radii.sm,
+    padding: 10,
+    fontSize: 13,
+    minHeight: 48,
+    textAlignVertical: 'top',
+  },
+  supportContactCard: {
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: spacing.md,
+    gap: 10,
+  },
+  supportContactHeader: {
+    gap: 2,
+  },
+  supportContactTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  supportContactSub: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  supportActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  supportActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radii.sm,
+    borderWidth: 1,
+  },
+  supportActionBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
   },
 });
