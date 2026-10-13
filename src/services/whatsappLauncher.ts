@@ -38,35 +38,56 @@ export function buildChatUrls(phone10: string, message: string) {
   const text = encodeURIComponent(message);
   return {
     native: `whatsapp://send?phone=${phone}&text=${text}`,
+    consumerNative: `whatsapp-consumer://send?phone=${phone}&text=${text}`,
     web: `https://api.whatsapp.com/send?phone=${phone}&text=${text}`,
   };
 }
 
 /**
- * Which WhatsApp apps are installed. Android only: iOS has a single WhatsApp scheme.
- * Needs the `<queries>` entries from plugins/withWhatsAppQueries.js on Android 11+;
- * without them nothing is detected and callers fall back to the system default.
+ * Which WhatsApp apps are installed.
+ * - On Android: Checks installed packages (com.whatsapp and com.whatsapp.w4b).
+ * - On iOS: Checks custom URL schemes declared in Info.plist (whatsapp:// and whatsapp-consumer://).
+ * When both are available, callers show the WhatsAppAppPickerModal to let the user select.
  */
 export async function getInstalledWhatsAppApps(): Promise<InstalledWhatsAppApp[]> {
-  if (Platform.OS !== 'android') return [];
-  const found = await Promise.all(
-    WHATSAPP_APPS.map(async (app): Promise<InstalledWhatsAppApp | null> => {
-      try {
-        const icon = await IntentLauncher.getApplicationIconAsync(app.packageName);
-        return { ...app, iconBase64: icon || null };
-      } catch {
-        return null;
-      }
-    })
-  );
-  return found.filter((a): a is InstalledWhatsAppApp => a !== null);
+  if (Platform.OS === 'android') {
+    if (!IntentLauncher) return [];
+    const found = await Promise.all(
+      WHATSAPP_APPS.map(async (app): Promise<InstalledWhatsAppApp | null> => {
+        try {
+          const icon = await IntentLauncher.getApplicationIconAsync(app.packageName);
+          return { ...app, iconBase64: icon || null };
+        } catch {
+          return null;
+        }
+      })
+    );
+    return found.filter((a): a is InstalledWhatsAppApp => a !== null);
+  }
+
+  // iOS platform detection
+  try {
+    const [canConsumer, canStandard] = await Promise.all([
+      Linking.canOpenURL('whatsapp-consumer://').catch(() => false),
+      Linking.canOpenURL('whatsapp://').catch(() => false),
+    ]);
+
+    if (canConsumer || canStandard) {
+      return [
+        { ...WHATSAPP_APPS[0], iconBase64: null },
+        { ...WHATSAPP_APPS[1], iconBase64: null },
+      ];
+    }
+  } catch {}
+
+  return [];
 }
 
 /** Open a chat with the prepared message, in the chosen app or the system default. */
 export async function openWhatsAppChat(phone10: string, message: string, app?: WhatsAppApp): Promise<void> {
   const urls = buildChatUrls(phone10, message);
 
-  if (app && Platform.OS === 'android') {
+  if (app && Platform.OS === 'android' && IntentLauncher) {
     try {
       await IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
         data: urls.native,
@@ -75,6 +96,25 @@ export async function openWhatsAppChat(phone10: string, message: string, app?: W
       return;
     } catch {
       // chosen app could not open the chat: fall through to the system default
+    }
+  }
+
+  if (app && Platform.OS === 'ios') {
+    if (app.id === 'whatsapp') {
+      try {
+        if (await Linking.canOpenURL(urls.consumerNative)) {
+          await Linking.openURL(urls.consumerNative);
+          return;
+        }
+      } catch {}
+    }
+    if (app.id === 'business') {
+      try {
+        if (await Linking.canOpenURL(urls.native)) {
+          await Linking.openURL(urls.native);
+          return;
+        }
+      } catch {}
     }
   }
 

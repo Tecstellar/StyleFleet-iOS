@@ -17,6 +17,10 @@
       "buildNumber": "1.0.4",
       "supportsTablet": false,
       "infoPlist": {
+        "LSApplicationQueriesSchemes": [
+          "whatsapp",
+          "whatsapp-consumer"
+        ],
         "NSContactsUsageDescription": "StyleFleet needs access to your contacts to import clients into your salon roster.",
         "NSCameraUsageDescription": "StyleFleet needs access to your camera to capture salon photos and scan service rate cards.",
         "NSPhotoLibraryUsageDescription": "StyleFleet needs access to your photo library to select salon logos and upload service menus.",

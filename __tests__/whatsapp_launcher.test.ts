@@ -63,10 +63,19 @@ describe('when to ask which WhatsApp', () => {
     expect(await getInstalledWhatsAppApps()).toEqual([]);
   });
 
-  it('does not probe on iOS', async () => {
+  it('detects both WhatsApp apps on iOS when schemes are available without calling IntentLauncher', async () => {
     mockPlatform.OS = 'ios';
-    expect(await getInstalledWhatsAppApps()).toEqual([]);
+    mockLinking.canOpenURL.mockResolvedValue(true);
+    const apps = await getInstalledWhatsAppApps();
+    expect(apps.length).toBe(2);
+    expect(apps.map((a) => a.id)).toEqual(['whatsapp', 'business']);
     expect(mockIntent.getApplicationIconAsync).not.toHaveBeenCalled();
+  });
+
+  it('returns empty array on iOS when WhatsApp schemes cannot be opened', async () => {
+    mockPlatform.OS = 'ios';
+    mockLinking.canOpenURL.mockResolvedValue(false);
+    expect(await getInstalledWhatsAppApps()).toEqual([]);
   });
 });
 
@@ -76,10 +85,12 @@ describe('opening the chat', () => {
   it('builds links with the +91 number and an encoded message', () => {
     const urls = buildChatUrls('98765 43210', 'Hi & bye ₹100');
     expect(urls.native).toBe('whatsapp://send?phone=919876543210&text=' + encodeURIComponent('Hi & bye ₹100'));
+    expect(urls.consumerNative).toBe('whatsapp-consumer://send?phone=919876543210&text=' + encodeURIComponent('Hi & bye ₹100'));
     expect(urls.web).toContain('https://api.whatsapp.com/send?phone=919876543210');
   });
 
-  it('sends to the chosen app only', async () => {
+  it('sends to the chosen app only on Android', async () => {
+    mockPlatform.OS = 'android';
     await openWhatsAppChat('9876543210', 'hello', app);
     expect(mockIntent.startActivityAsync).toHaveBeenCalledWith(
       'android.intent.action.VIEW',
@@ -88,19 +99,36 @@ describe('opening the chat', () => {
     expect(mockLinking.openURL).not.toHaveBeenCalled();
   });
 
+  it('opens consumer WhatsApp URL on iOS when regular WhatsApp is chosen', async () => {
+    mockPlatform.OS = 'ios';
+    mockLinking.canOpenURL.mockResolvedValue(true);
+    await openWhatsAppChat('9876543210', 'hello', WHATSAPP_APPS[0]);
+    expect(mockLinking.openURL).toHaveBeenCalledWith(expect.stringContaining('whatsapp-consumer://send'));
+  });
+
+  it('opens standard/business WhatsApp URL on iOS when WhatsApp Business is chosen', async () => {
+    mockPlatform.OS = 'ios';
+    mockLinking.canOpenURL.mockResolvedValue(true);
+    await openWhatsAppChat('9876543210', 'hello', WHATSAPP_APPS[1]);
+    expect(mockLinking.openURL).toHaveBeenCalledWith(expect.stringContaining('whatsapp://send'));
+  });
+
   it('falls back to the system default if the chosen app cannot open it', async () => {
+    mockPlatform.OS = 'android';
     mockIntent.startActivityAsync.mockRejectedValue(new Error('ActivityNotFound'));
     await openWhatsAppChat('9876543210', 'hello', app);
     expect(mockLinking.openURL).toHaveBeenCalledWith(expect.stringContaining('whatsapp://send'));
   });
 
   it('uses the system default when no app was chosen', async () => {
+    mockPlatform.OS = 'android';
     await openWhatsAppChat('9876543210', 'hello');
     expect(mockIntent.startActivityAsync).not.toHaveBeenCalled();
     expect(mockLinking.openURL).toHaveBeenCalledWith(expect.stringContaining('whatsapp://send'));
   });
 
   it('uses the web link when WhatsApp cannot be opened by scheme', async () => {
+    mockPlatform.OS = 'android';
     mockLinking.canOpenURL.mockResolvedValue(false);
     await openWhatsAppChat('9876543210', 'hello');
     expect(mockLinking.openURL).toHaveBeenCalledWith(expect.stringContaining('https://api.whatsapp.com/send'));
