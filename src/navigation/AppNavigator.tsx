@@ -68,6 +68,8 @@ import { ReportsScreen } from '../screens/reports/ReportsScreen';
 import { OnboardingTourModal } from '../components/common/OnboardingTourModal';
 import { versionService, VersionCheckResult } from '../services/versionService';
 import { UpdateRequiredModal } from '../components/common/UpdateRequiredModal';
+import { otaUpdateService } from '../services/otaUpdateService';
+import { OtaUpdateModal } from '../components/common/OtaUpdateModal';
 import { appReviewService } from '../services/appReviewService';
 import { AppReviewModal } from '../components/common/AppReviewModal';
 import { QuickBookSuggestion } from '../services/quickBookService';
@@ -150,12 +152,28 @@ export const AppNavigator = () => {
     }
   };
 
+  // Over-The-Air (OTA) update state
+  const [showOtaModal, setShowOtaModal] = useState<boolean>(false);
+
+  const runOtaCheck = async () => {
+    try {
+      const res = await otaUpdateService.checkForOtaUpdate();
+      if (res.isAvailable) {
+        setShowOtaModal(true);
+      }
+    } catch (err) {
+      console.warn('OTA update check notice:', err);
+    }
+  };
+
   useEffect(() => {
     runVersionCheck();
+    runOtaCheck();
 
     const appStateSub = AppState.addEventListener('change', (nextAppState) => {
       if (nextAppState === 'active') {
         runVersionCheck();
+        runOtaCheck();
       }
     });
 
@@ -2486,6 +2504,12 @@ export const AppNavigator = () => {
           onCheckAgain={runVersionCheck}
         />
       )}
+
+      {/* In-app Over-The-Air (OTA) Update Modal */}
+      <OtaUpdateModal
+        visible={showOtaModal}
+        onClose={() => setShowOtaModal(false)}
+      />
 
       {/* 10 Bills Milestone App Review Modal */}
       <AppReviewModal

@@ -3,6 +3,15 @@
     "name": "StyleFleet",
     "slug": "stylefleet",
     "version": "1.0.4",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c7a1d8c8-fdbc-4ed7-a757-212d63772899",
+      "enabled": true,
+      "checkAutomatically": "NEVER",
+      "fallbackToCacheTimeout": 0
+    },
     "scheme": "stylefleet",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -71,7 +80,8 @@
           ]
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-updates"
     ],
     "web": {
       "favicon": "./assets/favicon.png"
